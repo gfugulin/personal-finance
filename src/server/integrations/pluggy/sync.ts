@@ -173,6 +173,7 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
   // 2. Fetch Accounts
   const accountsResponse = await pluggy.fetchAccounts(itemId);
   const accounts = accountsResponse.results || [];
+  let totalTransactionsCount = 0;
 
   for (const acc of accounts) {
     const accType: AccountType = acc.type === 'CREDIT' ? 'CREDIT' : 'BANK';
@@ -207,32 +208,59 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
     if (!dbAccount) continue;
 
     // 3. Paginação via cursor (GET /v2/transactions) suportada nativamente pelo SDK Pluggy v2
-    const transactions = await pluggy.fetchAllTransactions(acc.id);
+    let transactions: any[] = [];
+    try {
+      transactions = await pluggy.fetchAllTransactions(acc.id);
+    } catch (txFetchErr: any) {
+      console.warn(`Aviso ao buscar transações da conta ${acc.id}:`, txFetchErr?.message || txFetchErr);
+    }
+
+    console.info(`[Sync] Conta ${acc.name} (${acc.id}): ${transactions.length} transações encontradas na Pluggy.`);
 
     for (const tx of transactions) {
       const txAmount = tx.amount;
       const nature = inferFinancialNature(tx.description, txAmount, accType);
       const taxTreatment = classifyFiscalSafety(txAmount, nature, false);
 
-      await supabase.from('transactions').upsert(
-        {
-          user_id: userId,
-          account_id: dbAccount.id,
-          external_transaction_id: tx.id,
-          description: tx.description || 'Transação',
-          merchant_name: tx.merchant?.name || null,
-          amount: txAmount,
-          currency_code: tx.currencyCode || 'BRL',
-          transaction_date: tx.date || new Date().toISOString(),
-          status: tx.status === 'PENDING' ? 'PENDING' : 'POSTED',
-          nature,
-          tax_treatment: taxTreatment,
-          payment_method: tx.paymentData?.paymentMethod || null,
-          provider_category: tx.category || null,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'account_id,external_transaction_id' }
-      );
+      const txRecord = {
+        user_id: userId,
+        account_id: dbAccount.id,
+        external_transaction_id: tx.id,
+        description: tx.description || 'Transação',
+        merchant_name: tx.merchant?.name || null,
+        amount: txAmount,
+        currency_code: tx.currencyCode || 'BRL',
+        transaction_date: tx.date || new Date().toISOString(),
+        status: tx.status === 'PENDING' ? 'PENDING' : 'POSTED',
+        nature,
+        tax_treatment: taxTreatment,
+        payment_method: tx.paymentData?.paymentMethod || null,
+        provider_category: tx.category || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Tenta upsert direto por constraint
+      const { error: upsertErr } = await supabase
+        .from('transactions')
+        .upsert(txRecord, { onConflict: 'account_id,external_transaction_id' });
+
+      if (upsertErr) {
+        // Fallback resiliente: caso a tabela transactions use índice parcial ou sem constraint única matching
+        const { data: existingTx } = await supabase
+          .from('transactions')
+          .select('id')
+          .eq('account_id', dbAccount.id)
+          .eq('external_transaction_id', tx.id)
+          .maybeSingle();
+
+        if (existingTx) {
+          await supabase.from('transactions').update(txRecord).eq('id', existingTx.id);
+        } else {
+          await supabase.from('transactions').insert(txRecord);
+        }
+      }
+
+      totalTransactionsCount++;
     }
   }
 
@@ -270,6 +298,7 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
     status: 'SYNCED',
     itemStatus: item.status,
     accountsCount: accounts.length,
+    transactionsCount: totalTransactionsCount,
     connectionId,
   };
 }

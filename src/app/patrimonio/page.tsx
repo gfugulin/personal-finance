@@ -142,7 +142,7 @@ export default function PatrimonioPage() {
       const data = await res.json();
 
       if (res.status === 200) {
-        setSyncStatus(`Conectado com sucesso via Meu Pluggy! ${data.accountsCount || 0} conta(s) importada(s).`);
+        setSyncStatus(`Conectado com sucesso via Meu Pluggy! ${data.accountsCount || 0} conta(s) e ${data.transactionsCount || 0} movimentação(ões) importada(s).`);
         setLastSyncDate('Agora mesmo');
         await loadPatrimonioData();
       } else if (res.status === 202) {
