@@ -3,14 +3,14 @@ import { createAdminSupabaseClient } from '@/server/db/supabase';
 import { classifyFiscalSafety } from '@/domain/tax/engine';
 import { TransactionNature, AccountType } from '@/domain/finance/types';
 
-function inferFinancialNature(
+export function inferFinancialNature(
   desc: string,
   amount: number,
   accountType: AccountType
 ): TransactionNature {
   const lower = (desc || '').toLowerCase();
 
-  // Invoice payment detection
+  // 1. Detecção de Pagamento de Fatura em conta bancária (BANK)
   if (
     lower.includes('pagamento de fatura') ||
     lower.includes('pagamento fatura') ||
@@ -22,7 +22,7 @@ function inferFinancialNature(
     return 'CARD_PAYMENT';
   }
 
-  // Own transfer detection
+  // 2. Detecção de Transferência entre contas próprias
   if (
     lower.includes('transferência entre contas') ||
     lower.includes('mesma titularidade') ||
@@ -31,7 +31,7 @@ function inferFinancialNature(
     return 'TRANSFER';
   }
 
-  // Investment contribution
+  // 3. Aporte em investimento
   if (
     lower.includes('aplicação') ||
     lower.includes('aplicacao') ||
@@ -42,17 +42,24 @@ function inferFinancialNature(
     return 'INVESTMENT';
   }
 
-  // Credit card transactions
+  // 4. Semântica oficial da Pluggy para Cartão de Crédito (CREDIT):
+  //    amount > 0: Compra no cartão (EXPENSE)
+  //    amount < 0: Pagamento de fatura, estorno ou crédito (CARD_PAYMENT ou REFUND)
   if (accountType === 'CREDIT') {
-    if (amount < 0 || lower.includes('compra')) {
+    if (amount > 0) {
       return 'EXPENSE';
     }
-    if (amount > 0) {
+    if (amount < 0) {
+      if (lower.includes('estorno') || lower.includes('reembolso')) {
+        return 'REFUND';
+      }
       return 'CARD_PAYMENT';
     }
   }
 
-  // Standard inflows and outflows
+  // 5. Conta bancária (BANK):
+  //    amount > 0: entrada (INCOME)
+  //    amount < 0: saída (EXPENSE)
   if (amount > 0) return 'INCOME';
   if (amount < 0) return 'EXPENSE';
 
@@ -86,7 +93,6 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
   }
 
   if (!userId) {
-    // Lookup real owner user in database
     const { data: firstProfile } = await supabase.from('profiles').select('id').maybeSingle();
     if (firstProfile?.id) {
       userId = firstProfile.id;
@@ -108,7 +114,7 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
     throw new Error('Não foi possível identificar o usuário proprietário no Supabase para vincular a conexão.');
   }
 
-  // Upsert connection
+  // Mapear status da conexão conforme lifecycle da Pluggy
   const institutionName = item.connector?.name || 'Pluggy Bank (Sandbox)';
   const statusMap: Record<string, string> = {
     UPDATED: 'ACTIVE',
@@ -117,8 +123,11 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
     LOGIN_ERROR: 'ERROR',
     OUTDATED: 'REAUTH_REQUIRED',
   };
-  const connStatus = statusMap[item.status] || 'ACTIVE';
+  const connStatus = statusMap[item.status] || (item.status === 'UPDATED' ? 'ACTIVE' : 'SYNCING');
 
+  const isUpdated = item.status === 'UPDATED';
+
+  // Upsert financial_connections
   const { data: connectionRecord, error: connErr } = await supabase
     .from('financial_connections')
     .upsert(
@@ -130,7 +139,7 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
         connector_id: item.connector?.id?.toString() || null,
         status: connStatus,
         last_sync_at: new Date().toISOString(),
-        last_successful_sync_at: item.status === 'UPDATED' ? new Date().toISOString() : undefined,
+        last_successful_sync_at: isUpdated ? new Date().toISOString() : undefined,
         last_error_code: item.error ? JSON.stringify(item.error.code) : null,
         updated_at: new Date().toISOString(),
       },
@@ -140,10 +149,20 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
     .single();
 
   if (connErr || !connectionRecord) {
-    throw new Error(`Failed to upsert financial_connection: ${connErr?.message}`);
+    throw new Error(`Falha ao persistir financial_connections: ${connErr?.message}`);
   }
 
   const connectionId = connectionRecord.id;
+
+  // Se o item ainda estiver em coleta (UPDATING), registrar conexão e retornar 202
+  if (item.status === 'UPDATING') {
+    return {
+      status: 'SYNC_REQUESTED',
+      itemStatus: 'UPDATING',
+      message: 'Item em processo de coleta pela instituição financeira.',
+      connectionId,
+    };
+  }
 
   // 2. Fetch Accounts
   const accountsResponse = await pluggy.fetchAccounts(itemId);
@@ -163,11 +182,13 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
           external_account_id: acc.id,
           type: accType,
           subtype: acc.subtype || null,
-          name: acc.name || 'Conta ' + acc.number,
+          name: acc.name || 'Conta ' + (acc.number || ''),
           currency_code: acc.currencyCode || 'BRL',
           balance: balance,
-          credit_limit: creditData?.creditLimit || null,
-          available_credit_limit: creditData?.availableCreditLimit || null,
+          credit_limit: creditData?.creditLimit ?? null,
+          available_credit_limit: creditData?.availableCreditLimit ?? null,
+          invoice_due_date: creditData?.balanceDueDate ? new Date(creditData.balanceDueDate) : null,
+          invoice_close_date: creditData?.balanceCloseDate ? new Date(creditData.balanceCloseDate) : null,
           is_active: true,
           reference_date: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -179,14 +200,14 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
 
     if (!dbAccount) continue;
 
-    // 3. Fetch Transactions for this account (with pagination)
+    // 3. Paginação completa de transações com pageSize=500 até totalPages (Seção 6.2 do Runbook)
     let page = 1;
     let hasMore = true;
 
-    while (hasMore && page <= 5) {
+    while (hasMore) {
       const txResponse = await pluggy.fetchTransactions(acc.id, {
         page,
-        pageSize: 100,
+        pageSize: 500,
       });
 
       const transactions = txResponse.results || [];
@@ -218,7 +239,8 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
         );
       }
 
-      if (txResponse.page >= txResponse.totalPages) {
+      const totalPages = txResponse.totalPages || 1;
+      if (page >= totalPages) {
         hasMore = false;
       } else {
         page++;
@@ -226,7 +248,7 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
     }
   }
 
-  // 4. Fetch Investments when available
+  // 4. Fetch Investments quando disponíveis
   try {
     const invResponse = await pluggy.fetchInvestments(itemId);
     const investments = invResponse.results || [];
@@ -241,22 +263,27 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
           ticker: (inv as any).code || null,
           type: inv.type,
           subtype: inv.subtype || null,
-          quantity: (inv as any).quantity || null,
-          unit_value: (inv as any).unitPrice || null,
-          current_value: inv.balance || 0,
-          contributed_value: (inv as any).amountOriginal || null,
+          quantity: (inv as any).quantity ?? null,
+          unit_value: (inv as any).unitPrice ?? null,
+          current_value: inv.balance ?? (inv as any).amount ?? 0,
+          contributed_value: (inv as any).amountOriginal ?? null,
           currency_code: inv.currencyCode || 'BRL',
-          reference_date: new Date().toISOString(),
+          reference_date: (inv as any).date ? new Date((inv as any).date).toISOString() : new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'connection_id,external_investment_id' }
       );
     }
   } catch (invErr) {
-    console.warn('Investments not supported or empty for connector:', invErr);
+    console.warn('Investimentos não suportados ou vazios para este conector:', invErr);
   }
 
-  return { success: true, accountsCount: accounts.length };
+  return {
+    status: 'SYNCED',
+    itemStatus: item.status,
+    accountsCount: accounts.length,
+    connectionId,
+  };
 }
 
 export async function handleTransactionEvent(
@@ -267,6 +294,7 @@ export async function handleTransactionEvent(
   const transactionId = payload.data?.id || payload.id;
   const transactionIds: string[] = payload.data?.transactionIds || (transactionId ? [transactionId] : []);
 
+  // 1. transactions/deleted: Soft delete marcando status DELETED (Runbook seção 7.3)
   if (eventType === 'transactions/deleted') {
     for (const id of transactionIds) {
       await supabase
@@ -281,13 +309,13 @@ export async function handleTransactionEvent(
     return { success: true, deleted: transactionIds.length };
   }
 
-  // For created or updated: fetch authoritative transaction details if itemId or accountId is known
+  // 2. transactions/created: usar createdTransactionsLink ou buscar transações
   const itemId = payload.itemId || payload.data?.itemId;
   if (itemId) {
     return await syncItemData(itemId);
   }
 
-  // If specific transaction IDs are provided, fetch them individually
+  // 3. Atualizar transações específicas
   if (transactionIds.length > 0) {
     const pluggy = getPluggyClient();
     for (const id of transactionIds) {
@@ -323,7 +351,7 @@ export async function handleTransactionEvent(
           }
         }
       } catch (singleErr) {
-        console.warn('Failed to fetch individual transaction:', id, singleErr);
+        console.warn('Falha ao buscar transação individual:', id, singleErr);
       }
     }
   }
