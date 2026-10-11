@@ -7,10 +7,10 @@ export const metadata: Metadata = {
   title: 'Finanças Pessoais',
   description: 'Organizador pessoal financeiro, patrimonial e fiscal.',
   manifest: '/manifest.json',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'black-translucent',
-    title: 'Finanças',
+  other: {
+    'mobile-web-app-capable': 'yes',
+    'apple-mobile-web-app-capable': 'yes',
+    'apple-mobile-web-app-status-bar-style': 'black-translucent',
   },
 };
 

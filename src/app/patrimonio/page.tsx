@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Landmark, TrendingUp, CreditCard, Wallet, PlusCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
+import { Landmark, TrendingUp, CreditCard, Wallet, PlusCircle, CheckCircle2, Loader2, RefreshCw, Info } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
 // Dynamically load PluggyConnect to avoid SSR document/window issues
@@ -45,34 +45,61 @@ export default function PatrimonioPage() {
     }
   };
 
+  const processItemSync = async (itemId: string, statusHint?: string) => {
+    try {
+      setIsSyncing(true);
+      setSyncStatus(`Item criado (${statusHint || 'UPDATING'}). Sincronizando contas e dados...`);
+      
+      const res = await fetch('/api/connections/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId }),
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        setSyncStatus(`Conectado com sucesso! ${data.accountsCount || 0} conta(s) importada(s).`);
+        setLastSyncDate('Agora mesmo');
+      } else {
+        setSyncStatus('Conexão registrada no sistema. Dados sendo processados via webhook.');
+      }
+    } catch {
+      setSyncStatus('Conexão registrada! Concluindo sincronização via webhook.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleSuccess = async (itemData: any) => {
     const itemId = itemData?.item?.id || itemData?.itemId;
     setConnectToken(null);
 
     if (itemId) {
-      try {
-        setIsSyncing(true);
-        setSyncStatus('Sincronizando contas, cartões e transações...');
-        const res = await fetch('/api/connections/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ itemId }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-          setSyncStatus(`Sincronização concluída com sucesso (${data.accountsCount || 0} contas importadas)!`);
-          setLastSyncDate('Agora mesmo');
-        } else {
-          setSyncStatus('Conexão autorizada. Dados sendo processados via webhook.');
-        }
-      } catch {
-        setSyncStatus('Conexão realizada! Concluindo sincronização em segundo plano.');
-      } finally {
-        setIsSyncing(false);
-      }
+      await processItemSync(itemId, 'UPDATED');
     } else {
       setSyncStatus('Conexão bancária autorizada.');
     }
+  };
+
+  const handleError = async (error: any) => {
+    console.error('Pluggy connection error payload:', error);
+    setConnectToken(null);
+
+    // Se o item foi criado na Pluggy (mesmo que o widget reporte timeout/não sincronizado a tempo)
+    const itemId = error?.data?.item?.id || error?.item?.id;
+    const itemStatus = error?.data?.item?.status || error?.item?.status;
+
+    if (itemId) {
+      await processItemSync(itemId, itemStatus || 'UPDATING');
+      return;
+    }
+
+    setSyncStatus(
+      'Falha no conector: ' +
+        (error?.message === 'Item was not sync successfully'
+          ? 'O conector não respondeu a tempo. Se usou Pluggy Bank Sandbox, utilize usuário: user-ok / senha: password-ok.'
+          : error?.message || 'Verifique suas credenciais.')
+    );
   };
 
   return (
@@ -172,6 +199,15 @@ export default function PatrimonioPage() {
           </div>
         </div>
 
+        {/* Dica de Credenciais do Sandbox */}
+        <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/15 flex items-start gap-2 text-[11px] text-slate-300">
+          <Info className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <span className="font-semibold text-emerald-400 block mb-0.5">Credenciais Pluggy Bank (Sandbox):</span>
+            <span>Usuário: <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300 font-mono">user-ok</code> | Senha: <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300 font-mono">password-ok</code></span>
+          </div>
+        </div>
+
         {syncStatus && (
           <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-2 text-xs">
             {isSyncing ? (
@@ -207,11 +243,7 @@ export default function PatrimonioPage() {
               connectToken={connectToken}
               includeSandbox={true}
               onSuccess={handleSuccess}
-              onError={(error: any) => {
-                console.error('Pluggy connection error:', error);
-                setSyncStatus('Erro na conexão com o banco.');
-                setConnectToken(null);
-              }}
+              onError={handleError}
               onClose={() => setConnectToken(null)}
             />
           </div>
