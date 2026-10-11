@@ -9,7 +9,7 @@ import {
 } from '@/domain/finance/aggregators';
 import { TransactionNature, TaxTreatment } from '@/domain/finance/types';
 
-export async function fetchUserFinancialSummary() {
+export async function fetchUserFinancialSummary(targetMonth?: string) {
   const supabase = createServerSupabaseClient();
   const {
     data: { user },
@@ -90,7 +90,7 @@ export async function fetchUserFinancialSummary() {
     .maybeSingle();
 
   // 6. Aggregate view models
-  const hoje = aggregateHojeData(accounts, transactions, reserveFloor);
+  const hoje = aggregateHojeData(accounts, transactions, reserveFloor, targetMonth);
   const patrimonio = aggregatePatrimonioData(accounts, investments, transactions);
 
   return {

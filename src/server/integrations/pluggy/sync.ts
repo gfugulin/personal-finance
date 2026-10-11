@@ -6,27 +6,40 @@ import { TransactionNature, AccountType } from '@/domain/finance/types';
 export function inferFinancialNature(
   desc: string,
   amount: number,
-  accountType: AccountType
+  accountType: AccountType,
+  providerCategory?: string | null
 ): TransactionNature {
   const lower = (desc || '').toLowerCase();
+  const prov = (providerCategory || '').toLowerCase();
 
-  // 1. Detecção de Pagamento de Fatura em conta bancária (BANK)
+  // 1. Detecção de Pagamento de Fatura em conta bancária (BANK) ou no cartão
   if (
     lower.includes('pagamento de fatura') ||
     lower.includes('pagamento fatura') ||
     lower.includes('pgto fatura') ||
     lower.includes('fatura nubank') ||
     lower.includes('fatura cartao') ||
-    lower.includes('fatura cartão')
+    lower.includes('fatura cartão') ||
+    lower.includes('nu pagamentos') ||
+    lower.includes('pagamento recebido')
   ) {
     return 'CARD_PAYMENT';
   }
 
-  // 2. Detecção de Transferência entre contas próprias
+  // 2. Detecção de Transferência entre contas próprias ou categoria Transfers
   if (
+    prov === 'transfers' ||
+    prov === 'transferencias' ||
+    prov === 'transferências' ||
     lower.includes('transferência entre contas') ||
     lower.includes('mesma titularidade') ||
-    lower.includes('transf mesma')
+    lower.includes('transf mesma') ||
+    lower.includes('transferência enviada') ||
+    lower.includes('transferencia enviada') ||
+    lower.includes('transferência recebida') ||
+    lower.includes('transferencia recebida') ||
+    lower.includes('ted enviada') ||
+    lower.includes('ted recebida')
   ) {
     return 'TRANSFER';
   }
@@ -219,7 +232,7 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
 
     for (const tx of transactions) {
       const txAmount = tx.amount;
-      const nature = inferFinancialNature(tx.description, txAmount, accType);
+      const nature = inferFinancialNature(tx.description, txAmount, accType, tx.category);
       const taxTreatment = classifyFiscalSafety(txAmount, nature, false);
 
       const txRecord = {
@@ -346,7 +359,7 @@ export async function handleTransactionEvent(
             .maybeSingle();
 
           if (dbAccount) {
-            const nature = inferFinancialNature(tx.description, tx.amount, dbAccount.type);
+            const nature = inferFinancialNature(tx.description, tx.amount, dbAccount.type, tx.category);
             const taxTreatment = classifyFiscalSafety(tx.amount, nature, false);
 
             await supabase.from('transactions').upsert(

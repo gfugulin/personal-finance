@@ -3,6 +3,7 @@ import {
   aggregateHojeData,
   aggregatePatrimonioData,
   aggregateIRData,
+  detectRecurringExpenses,
 } from '../src/domain/finance/aggregators';
 
 describe('Financial Aggregators (M3, M4 & M5 View Models)', () => {
@@ -189,6 +190,141 @@ describe('Financial Aggregators (M3, M4 & M5 View Models)', () => {
 
     expect(pat.investmentsProfit).toBe(2500); // (30000 - 28000) + (12500 - 12000)
     expect(pat.investmentsYieldRate).toBeCloseTo(2500 / 40000, 3); // 2500 / 40000 = 6.25%
+  });
+
+  it('filters month metrics strictly by targetMonth and ignores other months', () => {
+    const multiMonthTxs = [
+      {
+        id: 'tx-sep',
+        amount: -500,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-09-15T12:00:00Z',
+      },
+      {
+        id: 'tx-oct-income',
+        amount: 8000,
+        nature: 'INCOME' as const,
+        tax_treatment: 'TAXABLE_INCOME' as const,
+        transaction_date: '2026-10-05T12:00:00Z',
+      },
+      {
+        id: 'tx-oct-expense',
+        amount: -1200,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-10T12:00:00Z',
+      },
+    ];
+
+    // Se passar targetMonth: '2026-10', a despesa de setembro (500) NÃO deve entrar
+    const hojeOct = aggregateHojeData(accounts, multiMonthTxs, 0, '2026-10');
+    expect(hojeOct.monthIncome).toBe(8000);
+    expect(hojeOct.monthSpending).toBe(1200);
+    expect(hojeOct.selectedMonth).toBe('2026-10');
+
+    // Se passar targetMonth: '2026-09'
+    const hojeSep = aggregateHojeData(accounts, multiMonthTxs, 0, '2026-09');
+    expect(hojeSep.monthIncome).toBe(0);
+    expect(hojeSep.monthSpending).toBe(500);
+    expect(hojeSep.selectedMonth).toBe('2026-09');
+  });
+
+  it('ignores installments (e.g. 3/12, 6/6), Pix, and deduplicates subscription variants', () => {
+    const noisyTxs = [
+      // Parcela de curso (NÃO é assinatura)
+      {
+        id: 'tx-p1',
+        description: 'Vindi *Finclass 3/12',
+        amount: -69.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-09-10T10:00:00Z',
+      },
+      {
+        id: 'tx-p2',
+        description: 'Vindi *Finclass 4/12',
+        amount: -69.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-10T10:00:00Z',
+      },
+      // Parcela de aluguel de carro (NÃO é assinatura)
+      {
+        id: 'tx-car-1',
+        description: 'Foco Aluguel de Carros 5/6',
+        amount: -216.89,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-09-02T10:00:00Z',
+      },
+      {
+        id: 'tx-car-2',
+        description: 'Foco Aluguel de Carros 6/6',
+        amount: -216.89,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-02T10:00:00Z',
+      },
+      // Pix avulso (NÃO é assinatura)
+      {
+        id: 'tx-pix-1',
+        description: 'Transferência enviada pelo Pix M4 LTDA',
+        amount: -30,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-09-14T10:00:00Z',
+      },
+      {
+        id: 'tx-pix-2',
+        description: 'Transferência enviada pelo Pix M4 LTDA',
+        amount: -30,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-14T10:00:00Z',
+      },
+      // Assinatura real: Netflix (com duas descrições ligeiramente diferentes)
+      {
+        id: 'tx-net-1',
+        description: 'Netflix.com',
+        amount: -20.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-09-15T10:00:00Z',
+      },
+      {
+        id: 'tx-net-2',
+        description: 'Netflix Entretenimento',
+        amount: -20.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-15T10:00:00Z',
+      },
+    ];
+
+    const subs = detectRecurringExpenses(noisyTxs);
+    // Deve conter APENAS 1 assinatura (Netflix deduplicada), sem parcelas 3/12, 6/6 ou Pix!
+    expect(subs.length).toBe(1);
+    expect(subs[0].name.toLowerCase()).toContain('netflix');
+    expect(subs[0].amount).toBe(20.9);
+  });
+
+  it('calculates zero card liability when available credit limit equals total credit limit (paid bill)', () => {
+    const paidCardAccounts = [
+      {
+        id: 'acc-card-paid',
+        name: 'Nubank Mastercard Black',
+        type: 'CREDIT' as const,
+        balance: -1500, // Saldo antigo em cache
+        credit_limit: 10000,
+        available_credit_limit: 10000, // Limite 100% restabelecido (fatura paga)
+        is_active: true,
+      },
+    ];
+
+    const hoje = aggregateHojeData(paidCardAccounts, [], 0);
+    // Como o limite disponível é igual ao limite total, o passivo do cartão é 0, NÃO 1500!
+    expect(hoje.cardLiability).toBe(0);
   });
 });
 

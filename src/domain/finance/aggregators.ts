@@ -150,10 +150,27 @@ export function inferCategoryName(description?: string, providerCategory?: strin
 export function detectRecurringExpenses(transactions: TransactionRecord[]): RecurringSubscriptionItem[] {
   const expenseTxs = transactions.filter((t) => t.nature === 'EXPENSE');
 
-  // Normaliza o nome para agrupar ocorrências
+  // Ignorar compras parceladas (ex: 3/12, 6/6, parcela 1 de 10)
+  const isInstallment = (name: string) => {
+    return /\d+\s*[\/|\\]\s*\d+/.test(name) || /parcela\s*\d+/i.test(name) || /\b\d+\s+de\s+\d+\b/i.test(name);
+  };
+
+  // Ignorar transferências Pix, TED, DOC ou transações financeiras genéricas
+  const isTransferOrPix = (name: string) => {
+    return /\bpix\b/i.test(name) || /transfer[eê]ncia/i.test(name) || /\bted\b/i.test(name) || /\bdoc\b/i.test(name);
+  };
+
+  // Normaliza o nome para agrupar ocorrências e deduplicar serviços conhecidos
   const normalizeRoot = (name: string) => {
-    return name
-      .toLowerCase()
+    const lower = name.toLowerCase();
+    if (lower.includes('netflix')) return 'netflix';
+    if (lower.includes('spotify')) return 'spotify';
+    if (lower.includes('prime') || lower.includes('amazon video')) return 'amazon prime';
+    if (lower.includes('disney')) return 'disney+';
+    if (lower.includes('youtube')) return 'youtube premium';
+    if (lower.includes('99freelas')) return '99freelas';
+
+    return lower
       .replace(/\.com(\.br)?/g, '')
       .replace(/[\d\-_\/]/g, ' ')
       .replace(/\s+/g, ' ')
@@ -164,6 +181,10 @@ export function detectRecurringExpenses(transactions: TransactionRecord[]): Recu
 
   for (const tx of expenseTxs) {
     const rawName = tx.merchant_name || tx.description || 'Despesa';
+    if (isInstallment(rawName) || isTransferOrPix(rawName)) {
+      continue;
+    }
+
     const key = normalizeRoot(rawName);
     if (!groups.has(key)) {
       groups.set(key, []);
@@ -190,7 +211,12 @@ export function detectRecurringExpenses(transactions: TransactionRecord[]): Recu
       // Ordena por data decrescente para pegar a última ocorrência e nome mais recente
       txs.sort((a, b) => new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime());
       const latestTx = txs[0];
-      const displayName = latestTx.merchant_name || latestTx.description || key;
+
+      let displayName = latestTx.merchant_name || latestTx.description || key;
+      if (key === 'netflix') displayName = 'Netflix';
+      else if (key === 'spotify') displayName = 'Spotify';
+      else if (key === 'amazon prime') displayName = 'Amazon Prime';
+      else if (key === '99freelas') displayName = '99Freelas';
 
       subscriptions.push({
         name: displayName,
@@ -202,7 +228,21 @@ export function detectRecurringExpenses(transactions: TransactionRecord[]): Recu
     }
   }
 
-  return subscriptions;
+  return subscriptions.sort((a, b) => b.amount - a.amount);
+}
+
+/**
+ * Obtém todos os meses YYYY-MM disponíveis ordenados do mais recente ao mais antigo
+ */
+export function getAvailableMonths(transactions: TransactionRecord[]): string[] {
+  const months = new Set<string>();
+  for (const tx of transactions) {
+    if (tx.transaction_date && tx.transaction_date.length >= 7) {
+      months.add(tx.transaction_date.slice(0, 7));
+    }
+  }
+  const sorted = Array.from(months).sort().reverse();
+  return sorted.length > 0 ? sorted : [new Date().toISOString().slice(0, 7)];
 }
 
 /**
@@ -211,7 +251,8 @@ export function detectRecurringExpenses(transactions: TransactionRecord[]): Recu
 export function aggregateHojeData(
   accounts: AccountRecord[],
   transactions: TransactionRecord[],
-  reserveFloor: number = 0
+  reserveFloor: number = 0,
+  targetMonth?: string
 ) {
   const activeAccounts = accounts.filter((a) => a.is_active);
 
@@ -220,10 +261,22 @@ export function aggregateHojeData(
     .filter((a) => a.type === 'BANK')
     .reduce((sum, a) => sum + (Number(a.balance) || 0), 0);
 
-  // 2. Passivo de fatura de cartão (valor absoluto do saldo usado)
+  // 2. Passivo de fatura de cartão (FIN-006):
+  // Se o banco informar credit_limit e available_credit_limit:
+  // a dívida real em aberto é (credit_limit - available_credit_limit).
+  // Se available_credit_limit >= credit_limit, o cartão não possui dívida pendente (fatura paga).
   const cardLiability = activeAccounts
     .filter((a) => a.type === 'CREDIT')
-    .reduce((sum, a) => sum + Math.abs(Number(a.balance) || 0), 0);
+    .reduce((sum, a) => {
+      if (
+        typeof a.credit_limit === 'number' &&
+        typeof a.available_credit_limit === 'number' &&
+        a.credit_limit > 0
+      ) {
+        return sum + Math.max(0, a.credit_limit - a.available_credit_limit);
+      }
+      return sum + Math.abs(Number(a.balance) || 0);
+    }, 0);
 
   // 3. Dinheiro Livre (FIN-006)
   const freeMoney = calculateFreeMoney({
@@ -234,7 +287,11 @@ export function aggregateHojeData(
     reserveFloor,
   });
 
-  // 4. Fluxo operacional do mês corrente
+  // 4. Determinação do mês de corte
+  const availableMonths = getAvailableMonths(transactions);
+  const selectedMonth = targetMonth || availableMonths[0] || new Date().toISOString().slice(0, 7);
+
+  // 5. Fluxo operacional filtrado estritamente para o mês selecionado
   let monthIncome = 0;
   let monthSpending = 0;
   let monthInvested = 0;
@@ -243,23 +300,27 @@ export function aggregateHojeData(
   const categoryTotals = new Map<string, { total: number; count: number }>();
 
   for (const tx of transactions) {
-    const amt = Number(tx.amount) || 0;
-    const absAmt = Math.abs(amt);
+    const isThisMonth = tx.transaction_date && tx.transaction_date.startsWith(selectedMonth);
 
-    if (tx.nature === 'INCOME') {
-      monthIncome += absAmt;
-    } else if (tx.nature === 'EXPENSE') {
-      monthSpending += absAmt;
+    if (isThisMonth) {
+      const amt = Number(tx.amount) || 0;
+      const absAmt = Math.abs(amt);
 
-      // Agrupa na categoria
-      const cat = inferCategoryName(tx.description, tx.provider_category);
-      const currentCat = categoryTotals.get(cat) || { total: 0, count: 0 };
-      categoryTotals.set(cat, {
-        total: currentCat.total + absAmt,
-        count: currentCat.count + 1,
-      });
-    } else if (tx.nature === 'INVESTMENT') {
-      monthInvested += absAmt;
+      if (tx.nature === 'INCOME') {
+        monthIncome += absAmt;
+      } else if (tx.nature === 'EXPENSE') {
+        monthSpending += absAmt;
+
+        // Agrupa na categoria
+        const cat = inferCategoryName(tx.description, tx.provider_category);
+        const currentCat = categoryTotals.get(cat) || { total: 0, count: 0 };
+        categoryTotals.set(cat, {
+          total: currentCat.total + absAmt,
+          count: currentCat.count + 1,
+        });
+      } else if (tx.nature === 'INVESTMENT') {
+        monthInvested += absAmt;
+      }
     }
 
     if (tx.tax_treatment === 'REVIEW' || tx.nature === 'UNKNOWN') {
@@ -267,10 +328,10 @@ export function aggregateHojeData(
     }
   }
 
-  // 5. Taxa de poupança (FIN-008)
+  // 6. Taxa de poupança (FIN-008)
   const savingsRate = calculateSavingsRate(monthIncome, monthSpending) ?? 0;
 
-  // 6. Category breakdown
+  // 7. Category breakdown do mês selecionado
   const categoryBreakdown: CategoryBreakdownItem[] = Array.from(categoryTotals.entries())
     .map(([category, data]) => ({
       category,
@@ -280,7 +341,7 @@ export function aggregateHojeData(
     }))
     .sort((a, b) => b.total - a.total);
 
-  // 7. Despesas Recorrentes / Assinaturas (Heurística Automática)
+  // 8. Despesas Recorrentes / Assinaturas (Heurística Automática)
   const recurringSubscriptions = detectRecurringExpenses(transactions);
   const totalFixedMonthly = recurringSubscriptions.reduce((sum, s) => sum + s.amount, 0);
 
@@ -296,6 +357,8 @@ export function aggregateHojeData(
     categoryBreakdown,
     recurringSubscriptions,
     totalFixedMonthly,
+    selectedMonth,
+    availableMonths,
   };
 }
 

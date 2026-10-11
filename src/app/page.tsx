@@ -1,13 +1,18 @@
-import { RefreshCw, TrendingUp, AlertCircle, ShieldCheck, Wallet, CreditCard, Tag, CalendarClock, ArrowUpRight, ArrowDownRight, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, TrendingUp, AlertCircle, ShieldCheck, Wallet, CreditCard, Tag, CalendarClock, ArrowUpRight, ArrowDownRight, CheckCircle2, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
 import Link from 'next/link';
 import { fetchUserFinancialSummary } from '@/server/db/dashboard';
 
 export const dynamic = 'force-dynamic';
 
-export default async function HojePage() {
+export default async function HojePage({
+  searchParams,
+}: {
+  searchParams?: { mes?: string };
+}) {
+  const targetMonth = searchParams?.mes;
   let summary;
   try {
-    summary = await fetchUserFinancialSummary();
+    summary = await fetchUserFinancialSummary(targetMonth);
   } catch (err) {
     // Caso de fallback em sessão inválida ou sem dados
     summary = null;
@@ -25,6 +30,8 @@ export default async function HojePage() {
     categoryBreakdown: [],
     recurringSubscriptions: [],
     totalFixedMonthly: 0,
+    selectedMonth: new Date().toISOString().slice(0, 7),
+    availableMonths: [new Date().toISOString().slice(0, 7)],
   };
 
   const netMonth = (hoje.monthIncome || 0) - (hoje.monthSpending || 0);
@@ -40,6 +47,27 @@ export default async function HojePage() {
     const hours = Math.floor(diff / 60);
     return `Há ${hours}h`;
   };
+
+  const formatMonthLabel = (monthKey: string) => {
+    if (!monthKey || monthKey.length < 7) return 'Mês Atual';
+    const [year, month] = monthKey.split('-');
+    const monthsPt = [
+      'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+      'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+    ];
+    const mIndex = parseInt(month, 10) - 1;
+    const name = monthsPt[mIndex] || month;
+    return `${name} de ${year}`;
+  };
+
+  const availableMonths = hoje.availableMonths || [];
+  const currentMonthIdx = availableMonths.indexOf(hoje.selectedMonth);
+  const prevMonth = currentMonthIdx !== -1 && currentMonthIdx < availableMonths.length - 1
+    ? availableMonths[currentMonthIdx + 1]
+    : null;
+  const nextMonth = currentMonthIdx > 0
+    ? availableMonths[currentMonthIdx - 1]
+    : null;
 
   return (
     <div className="flex flex-col gap-4 animate-fadeIn">
@@ -101,11 +129,47 @@ export default async function HojePage() {
         </div>
       </div>
 
+      {/* Seletor de Mês */}
+      <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 shadow-sm">
+        {prevMonth ? (
+          <Link
+            href={`/?mes=${prevMonth}`}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center gap-1 text-xs"
+            title="Mês anterior"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            <span className="text-[11px]">Anterior</span>
+          </Link>
+        ) : (
+          <div className="w-16" />
+        )}
+
+        <div className="flex items-center gap-2">
+          <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-xs font-bold text-slate-100 tracking-wide">
+            {formatMonthLabel(hoje.selectedMonth)}
+          </span>
+        </div>
+
+        {nextMonth ? (
+          <Link
+            href={`/?mes=${nextMonth}`}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center gap-1 text-xs"
+            title="Próximo mês"
+          >
+            <span className="text-[11px]">Próximo</span>
+            <ChevronRight className="w-4 h-4" />
+          </Link>
+        ) : (
+          <div className="w-16" />
+        )}
+      </div>
+
       {/* Resumo do Mês (Entrou, Gastou, Balanço Líquido) */}
       <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
-            Fluxo do Mês
+            Fluxo ({formatMonthLabel(hoje.selectedMonth)})
           </h2>
           <div className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
             netMonth >= 0
@@ -157,7 +221,7 @@ export default async function HojePage() {
             <div className="flex items-center gap-1.5">
               <Tag className="w-3.5 h-3.5 text-indigo-400" />
               <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                Gastos por Categoria
+                Gastos por Categoria ({formatMonthLabel(hoje.selectedMonth)})
               </h2>
             </div>
             <span className="text-[11px] text-slate-400">
