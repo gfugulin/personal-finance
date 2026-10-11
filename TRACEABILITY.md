@@ -5,7 +5,7 @@ Update this file during development.
 | Requirement | Spec | Acceptance scenario | Test | Status |
 |---|---|---|---|---|
 | UI-001 | 001 | MOBILE-001 | e2e/mobile-shell | implemented |
-| BANK-001 | 002 | BANK-001 | integration/pluggy-connect | implemented |
+| BANK-001 | 002 | BANK-001 | integration/pluggy-connect | verified |
 | BANK-005 | 002 | BANK-004 | integration/webhook-idempotency | verified |
 | FIN-001 | 003 | FIN-001 | unit/card-payment | verified |
 | FIN-002 | 003 | FIN-002 | unit/transfer | verified |

@@ -1,9 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { FileSpreadsheet, ShieldAlert, CheckSquare, Square, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { FileSpreadsheet, ShieldAlert, CheckSquare, Square, AlertCircle, Loader2 } from 'lucide-react';
 import { TAX_DISCLAIMER, TAX_FILING_NOTICE } from '@/domain/tax/config-2026';
-import { estimateAnnualTax } from '@/domain/tax/engine';
 
 export default function IRPage() {
   const [selectedYear, setSelectedYear] = useState(2026);
@@ -15,18 +14,40 @@ export default function IRPage() {
     { id: '5', label: 'Revisão de todas as entradas Pix sem categoria', completed: false },
   ]);
 
-  // Tax metrics mock/current read model for 2026
-  const taxableIncome = 42000.0;
-  const exemptIncome = 12500.0;
-  const exclusiveIncome = 3200.0;
-  const deductions = 2400.0;
-  const taxWithheld = 0.0;
+  // Real Tax Metrics state
+  const [taxableIncome, setTaxableIncome] = useState(0);
+  const [exemptIncome, setExemptIncome] = useState(0);
+  const [exclusiveIncome, setExclusiveIncome] = useState(0);
+  const [deductions, setDeductions] = useState(0);
+  const [taxWithheld, setTaxWithheld] = useState(0);
+  const [pendingReviews, setPendingReviews] = useState(0);
+  const [estimate, setEstimate] = useState({ taxDue: 0, reduction: 0, effectiveRate: 0 });
+  const [isLoading, setIsLoading] = useState(true);
 
-  const estimate = estimateAnnualTax({
-    taxableIncome,
-    deductions,
-    withheldOrPaid: taxWithheld,
-  });
+  const loadTaxSummary = async (year: number) => {
+    try {
+      setIsLoading(true);
+      const res = await fetch(`/api/ir?year=${year}`);
+      if (res.ok) {
+        const data = await res.json();
+        setTaxableIncome(data.taxableIncome || 0);
+        setExemptIncome(data.exemptIncome || 0);
+        setExclusiveIncome(data.exclusiveIncome || 0);
+        setDeductions(data.deductions || 0);
+        setTaxWithheld(data.taxWithheld || 0);
+        setPendingReviews(data.pendingReviewsCount || 0);
+        setEstimate(data.estimate || { taxDue: 0, reduction: 0, effectiveRate: 0 });
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar resumo de IR:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTaxSummary(selectedYear);
+  }, [selectedYear]);
 
   const toggleChecklist = (id: string) => {
     setChecklist((prev) =>
@@ -66,11 +87,15 @@ export default function IRPage() {
           </span>
         </div>
         <div className="text-3xl font-extrabold tracking-tight text-white mt-1">
-          {formatCurrency(estimate.taxDue)}
+          {isLoading ? (
+            <Loader2 className="w-6 h-6 animate-spin text-indigo-400 my-1" />
+          ) : (
+            formatCurrency(estimate.taxDue)
+          )}
         </div>
         {estimate.reduction > 0 && (
           <p className="mt-2 text-xs text-emerald-400 font-medium">
-            Redução legal aplicada: {formatCurrency(estimate.reduction)}
+            Redução legal aplicada (teto 2026): {formatCurrency(estimate.reduction)}
           </p>
         )}
       </div>
@@ -79,13 +104,31 @@ export default function IRPage() {
       <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col gap-1 text-[11px] text-slate-400">
         <div className="flex items-center gap-1.5 text-amber-400 font-semibold">
           <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
-          <span>Aviso Importante</span>
+          <span>Aviso Legal Obrigatório</span>
         </div>
         <p>{TAX_DISCLAIMER}</p>
         <p className="text-slate-500">{TAX_FILING_NOTICE}</p>
       </div>
 
-      {/* Cards de Rendimentos e Despesas */}
+      {/* Alerta de Transações Pendentes de Classificação Fiscal */}
+      {pendingReviews > 0 && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <span className="text-xs font-medium">
+              {pendingReviews} movimentação(ões) pendentes de revisão fiscal
+            </span>
+          </div>
+          <a
+            href="/movimentacoes?filter=review"
+            className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-200 hover:bg-amber-400/30"
+          >
+            Revisar
+          </a>
+        </div>
+      )}
+
+      {/* Cards de Rendimentos e Despesas Reais */}
       <div className="grid grid-cols-2 gap-2.5">
         <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800">
           <span className="text-[11px] text-slate-400 block font-medium">Tributáveis</span>

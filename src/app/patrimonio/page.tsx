@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Landmark, TrendingUp, CreditCard, Wallet, PlusCircle, CheckCircle2, Loader2, RefreshCw, Info } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
@@ -10,6 +10,19 @@ const PluggyConnect = dynamic(
   { ssr: false }
 );
 
+interface AccountItem {
+  id: string;
+  name: string;
+  type: 'BANK' | 'CREDIT';
+  balance: number;
+}
+
+interface InvestmentItem {
+  id: string;
+  name?: string | null;
+  current_value: number;
+}
+
 export default function PatrimonioPage() {
   const [connectToken, setConnectToken] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -17,15 +30,47 @@ export default function PatrimonioPage() {
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
 
-  // Core metrics
-  const cash = 5320.0;
-  const investments = 48500.0;
-  const cardLiability = 1870.0;
-  const netWorth = cash + investments - cardLiability;
-  const contributionsThisMonth = 1500.0;
+  // Real data state
+  const [cash, setCash] = useState<number>(0);
+  const [investments, setInvestments] = useState<number>(0);
+  const [cardLiability, setCardLiability] = useState<number>(0);
+  const [netWorth, setNetWorth] = useState<number>(0);
+  const [contributionsThisMonth, setContributionsThisMonth] = useState<number>(0);
+  const [accountsList, setAccountsList] = useState<AccountItem[]>([]);
+  const [investmentsList, setInvestmentsList] = useState<InvestmentItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+
+  const loadPatrimonioData = async () => {
+    try {
+      const res = await fetch('/api/patrimonio');
+      if (res.ok) {
+        const data = await res.json();
+        const p = data.patrimonio || {};
+        setCash(p.cash || 0);
+        setInvestments(p.investments || 0);
+        setCardLiability(p.cardLiability || 0);
+        setNetWorth(p.netWorth || 0);
+        setContributionsThisMonth(p.contributionsThisMonth || 0);
+        setAccountsList(data.accounts || []);
+        setInvestmentsList(data.investments || []);
+        if (data.lastSyncAt) {
+          const diff = Math.floor((Date.now() - new Date(data.lastSyncAt).getTime()) / 60000);
+          setLastSyncDate(diff < 1 ? 'Agora mesmo' : diff < 60 ? `Há ${diff} min` : 'Hoje');
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar patrimônio:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPatrimonioData();
+  }, []);
 
   const handleStartConnect = async () => {
     try {
@@ -60,9 +105,11 @@ export default function PatrimonioPage() {
       if (res.status === 200) {
         setSyncStatus(`Conectado com sucesso! ${data.accountsCount || 0} conta(s) importada(s).`);
         setLastSyncDate('Agora mesmo');
+        await loadPatrimonioData();
       } else if (res.status === 202) {
         setSyncStatus('Conexão registrada! O banco está processando as transações no Sandbox via webhook.');
         setLastSyncDate('Em andamento');
+        await loadPatrimonioData();
       } else {
         setSyncStatus(`Aviso na sincronização: ${data.error || 'Processando em segundo plano.'}`);
       }
@@ -88,7 +135,6 @@ export default function PatrimonioPage() {
     console.error('Pluggy connection error payload:', error);
     setConnectToken(null);
 
-    // Se o item foi criado na Pluggy (mesmo que o widget reporte timeout/não sincronizado a tempo)
     const itemId = error?.data?.item?.id || error?.item?.id;
     const itemStatus = error?.data?.item?.status || error?.item?.status;
 
@@ -115,7 +161,7 @@ export default function PatrimonioPage() {
         </div>
         {lastSyncDate && (
           <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400 flex items-center gap-1">
-            <RefreshCw className="w-3 h-3 text-emerald-400" />
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
             {lastSyncDate}
           </span>
         )}
@@ -154,7 +200,9 @@ export default function PatrimonioPage() {
             </div>
             <div>
               <span className="text-xs font-semibold text-slate-100 block">Investimentos</span>
-              <span className="text-[11px] text-slate-400">Renda Fixa, Ações e Fundos</span>
+              <span className="text-[11px] text-slate-400">
+                {investmentsList.length > 0 ? `${investmentsList.length} ativo(s)` : 'Renda Fixa, Ações e Fundos'}
+              </span>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-100">
@@ -170,7 +218,11 @@ export default function PatrimonioPage() {
             </div>
             <div>
               <span className="text-xs font-semibold text-slate-100 block">Contas Correntes</span>
-              <span className="text-[11px] text-slate-400">Saldo bancário disponível</span>
+              <span className="text-[11px] text-slate-400">
+                {accountsList.filter((a) => a.type === 'BANK').length > 0
+                  ? `${accountsList.filter((a) => a.type === 'BANK').length} conta(s) ativa(s)`
+                  : 'Saldo bancário disponível'}
+              </span>
             </div>
           </div>
           <span className="text-xs font-bold text-slate-100">{formatCurrency(cash)}</span>
@@ -184,7 +236,11 @@ export default function PatrimonioPage() {
             </div>
             <div>
               <span className="text-xs font-semibold text-slate-100 block">Faturas em Aberto</span>
-              <span className="text-[11px] text-slate-400">Passivo atual de cartão</span>
+              <span className="text-[11px] text-slate-400">
+                {accountsList.filter((a) => a.type === 'CREDIT').length > 0
+                  ? `${accountsList.filter((a) => a.type === 'CREDIT').length} cartão(ões) com saldo`
+                  : 'Passivo atual de cartão'}
+              </span>
             </div>
           </div>
           <span className="text-xs font-bold text-rose-400">
@@ -192,6 +248,42 @@ export default function PatrimonioPage() {
           </span>
         </div>
       </div>
+
+      {/* Lista detalhada de contas reais */}
+      {accountsList.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+            Contas Conectadas
+          </h2>
+          {accountsList.map((acc) => (
+            <div
+              key={acc.id}
+              className="flex items-center justify-between p-3 rounded-xl bg-slate-900/50 border border-slate-800/60"
+            >
+              <div className="flex items-center gap-2.5">
+                {acc.type === 'CREDIT' ? (
+                  <CreditCard className="w-4 h-4 text-rose-400" />
+                ) : (
+                  <Wallet className="w-4 h-4 text-emerald-400" />
+                )}
+                <div>
+                  <span className="text-xs font-medium text-slate-200 block">{acc.name}</span>
+                  <span className="text-[10px] text-slate-500">
+                    {acc.type === 'CREDIT' ? 'Cartão de Crédito' : 'Conta Corrente'}
+                  </span>
+                </div>
+              </div>
+              <span
+                className={`text-xs font-semibold ${
+                  acc.type === 'CREDIT' ? 'text-rose-400' : 'text-slate-100'
+                }`}
+              >
+                {formatCurrency(acc.balance)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Seção de Conexão Open Finance / Pluggy Sandbox */}
       <div className="mt-2 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 p-4 flex flex-col gap-3">
@@ -212,46 +304,45 @@ export default function PatrimonioPage() {
         </div>
 
         {syncStatus && (
-          <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-2 text-xs">
+          <div className="p-3 rounded-lg bg-slate-900 border border-slate-700/60 flex items-center gap-2 text-xs text-slate-200 animate-fadeIn">
             {isSyncing ? (
               <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
             ) : (
               <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
             )}
-            <span className="text-slate-300">{syncStatus}</span>
+            <span>{syncStatus}</span>
           </div>
         )}
 
-        {!connectToken ? (
-          <button
-            onClick={handleStartConnect}
-            disabled={isConnecting || isSyncing}
-            className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 font-semibold text-xs border border-slate-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {isConnecting ? (
-              <>
-                <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
-                <span>Gerando Connect Token...</span>
-              </>
-            ) : (
-              <>
-                <PlusCircle className="w-4 h-4 text-emerald-400" />
-                <span>Conectar Banco no Sandbox</span>
-              </>
-            )}
-          </button>
-        ) : (
-          <div className="p-2 bg-slate-950 rounded-lg border border-slate-800">
-            <PluggyConnect
-              connectToken={connectToken}
-              includeSandbox={true}
-              onSuccess={handleSuccess}
-              onError={handleError}
-              onClose={() => setConnectToken(null)}
-            />
-          </div>
-        )}
+        <button
+          onClick={handleStartConnect}
+          disabled={isConnecting || isSyncing}
+          className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold flex items-center justify-center gap-2 border border-slate-700 transition-colors disabled:opacity-50"
+        >
+          {isConnecting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+              <span>Gerando token seguro...</span>
+            </>
+          ) : (
+            <>
+              <PlusCircle className="w-4 h-4 text-emerald-400" />
+              <span>Conectar Banco no Sandbox</span>
+            </>
+          )}
+        </button>
       </div>
+
+      {/* Modal / Widget Pluggy Connect */}
+      {connectToken && (
+        <PluggyConnect
+          connectToken={connectToken}
+          includeSandbox={true}
+          onSuccess={handleSuccess}
+          onError={handleError}
+          onClose={() => setConnectToken(null)}
+        />
+      )}
     </div>
   );
 }

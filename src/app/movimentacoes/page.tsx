@@ -1,88 +1,58 @@
 'use client';
 
-import { useState } from 'react';
-import { Search, AlertCircle, CheckCircle2, ChevronRight, X } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, AlertCircle, CheckCircle2, ChevronRight, X, Loader2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { TransactionNature, TaxTreatment } from '@/domain/finance/types';
 
 interface TransactionItem {
   id: string;
   description: string;
+  merchantName?: string | null;
   amount: number;
   date: string;
   nature: TransactionNature;
   taxTreatment: TaxTreatment;
-  category: string;
   accountName: string;
+  accountType?: 'BANK' | 'CREDIT';
   reviewed: boolean;
 }
 
-const initialTransactions: TransactionItem[] = [
-  {
-    id: '1',
-    description: 'Pix recebido de João Silva',
-    amount: 1500.0,
-    date: '10/10/2026',
-    nature: 'INCOME',
-    taxTreatment: 'REVIEW',
-    category: 'Outros',
-    accountName: 'Nubank Conta',
-    reviewed: false,
-  },
-  {
-    id: '2',
-    description: 'Supermercado Pão de Açúcar',
-    amount: -342.5,
-    date: '09/10/2026',
-    nature: 'EXPENSE',
-    taxTreatment: 'NO_TAX_EFFECT',
-    category: 'Alimentação',
-    accountName: 'Nubank Cartão',
-    reviewed: true,
-  },
-  {
-    id: '3',
-    description: 'Pagamento de fatura Nubank',
-    amount: -1870.0,
-    date: '05/10/2026',
-    nature: 'CARD_PAYMENT',
-    taxTreatment: 'NO_TAX_EFFECT',
-    category: 'Fatura Cartão',
-    accountName: 'Nubank Conta',
-    reviewed: true,
-  },
-  {
-    id: '4',
-    description: 'Aplicação Tesouro Selic',
-    amount: -1000.0,
-    date: '03/10/2026',
-    nature: 'INVESTMENT',
-    taxTreatment: 'ASSET_MOVEMENT',
-    category: 'Investimentos',
-    accountName: 'Nubank Conta',
-    reviewed: true,
-  },
-  {
-    id: '5',
-    description: 'Transferência para conta própria Inter',
-    amount: -500.0,
-    date: '02/10/2026',
-    nature: 'TRANSFER',
-    taxTreatment: 'NO_TAX_EFFECT',
-    category: 'Transferência',
-    accountName: 'Nubank Conta',
-    reviewed: true,
-  },
-];
-
 export default function MovimentacoesPage() {
   const [filter, setFilter] = useState<'ALL' | 'REVIEW' | 'INCOME' | 'EXPENSE'>('ALL');
-  const [transactions, setTransactions] = useState<TransactionItem[]>(initialTransactions);
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
   const [selectedTx, setSelectedTx] = useState<TransactionItem | null>(null);
-  const [saveAsRule, setSaveAsRule] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const loadTransactions = async () => {
+    try {
+      const res = await fetch('/api/movimentacoes');
+      if (res.ok) {
+        const data = await res.json();
+        setTransactions(data.transactions || []);
+      }
+    } catch (err) {
+      console.warn('Erro ao carregar movimentações:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTransactions();
+  }, []);
 
   const filtered = transactions.filter((t) => {
-    if (filter === 'REVIEW') return !t.reviewed || t.taxTreatment === 'REVIEW';
+    if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      const matchDesc = t.description?.toLowerCase().includes(q);
+      const matchMerch = t.merchantName?.toLowerCase().includes(q);
+      if (!matchDesc && !matchMerch) return false;
+    }
+
+    if (filter === 'REVIEW') return !t.reviewed || t.taxTreatment === 'REVIEW' || t.nature === 'UNKNOWN';
     if (filter === 'INCOME') return t.nature === 'INCOME';
     if (filter === 'EXPENSE') return t.nature === 'EXPENSE';
     return true;
@@ -91,12 +61,42 @@ export default function MovimentacoesPage() {
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
-  const handleSaveClassification = () => {
+  const formatDate = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('pt-BR');
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const handleSaveClassification = async () => {
     if (!selectedTx) return;
-    setTransactions((prev) =>
-      prev.map((t) => (t.id === selectedTx.id ? { ...selectedTx, reviewed: true } : t))
-    );
-    setSelectedTx(null);
+    try {
+      setIsSaving(true);
+      const res = await fetch('/api/movimentacoes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: selectedTx.id,
+          nature: selectedTx.nature,
+          taxTreatment: selectedTx.taxTreatment,
+        }),
+      });
+
+      if (res.ok) {
+        setTransactions((prev) =>
+          prev.map((t) => (t.id === selectedTx.id ? { ...selectedTx, reviewed: true } : t))
+        );
+        setSelectedTx(null);
+      } else {
+        alert('Erro ao salvar classificação.');
+      }
+    } catch (err: any) {
+      alert('Falha na comunicação: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -105,6 +105,18 @@ export default function MovimentacoesPage() {
       <div className="pt-2">
         <h1 className="text-xl font-bold tracking-tight text-white">Movimentações</h1>
         <p className="text-xs text-slate-400">Classificação financeira e fiscal independente</p>
+      </div>
+
+      {/* Search Input */}
+      <div className="relative">
+        <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-3" />
+        <input
+          type="text"
+          placeholder="Buscar por descrição ou estabelecimento..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-700"
+        />
       </div>
 
       {/* Filter Chips */}
@@ -132,145 +144,175 @@ export default function MovimentacoesPage() {
 
       {/* Transactions List */}
       <div className="flex flex-col gap-2">
-        {filtered.map((tx) => {
-          const isPending = !tx.reviewed || tx.taxTreatment === 'REVIEW';
-          const isPositive = tx.amount > 0;
-
-          return (
-            <div
-              key={tx.id}
-              onClick={() => setSelectedTx(tx)}
-              className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/80 hover:border-slate-700 active:bg-slate-850 cursor-pointer transition-colors"
-            >
-              <div className="flex flex-col gap-0.5 flex-1 min-w-0 pr-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-slate-100 truncate">
-                    {tx.description}
-                  </span>
-                  {isPending && (
-                    <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium">
-                      <AlertCircle className="w-2.5 h-2.5" />
-                      Revisar
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                  <span>{tx.date}</span>
-                  <span>•</span>
-                  <span>{tx.category}</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span
-                  className={clsx(
-                    'text-xs font-bold',
-                    isPositive ? 'text-emerald-400' : 'text-slate-100'
-                  )}
-                >
-                  {formatCurrency(tx.amount)}
-                </span>
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-              </div>
-            </div>
-          );
-        })}
-
-        {filtered.length === 0 && (
-          <div className="p-8 text-center text-xs text-slate-500">
-            Nenhuma movimentação encontrada neste filtro.
+        {isLoading ? (
+          <div className="flex items-center justify-center p-8 text-slate-400 gap-2">
+            <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+            <span className="text-xs">Carregando movimentações do banco...</span>
           </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center p-8 bg-slate-900/40 rounded-2xl border border-slate-800">
+            <p className="text-xs text-slate-400">Nenhuma movimentação encontrada neste filtro.</p>
+          </div>
+        ) : (
+          filtered.map((tx) => {
+            const isPending = !tx.reviewed || tx.taxTreatment === 'REVIEW' || tx.nature === 'UNKNOWN';
+            const isPositive = tx.amount > 0;
+
+            return (
+              <div
+                key={tx.id}
+                onClick={() => setSelectedTx(tx)}
+                className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/80 hover:border-slate-700 active:bg-slate-850 cursor-pointer transition-colors"
+              >
+                <div className="flex flex-col gap-0.5 flex-1 min-w-0 pr-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-100 truncate">
+                      {tx.description}
+                    </span>
+                    {isPending && (
+                      <span className="flex-shrink-0 w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                    <span>{formatDate(tx.date)}</span>
+                    <span>•</span>
+                    <span>{tx.accountName}</span>
+                    <span>•</span>
+                    <span className="font-mono text-[9px] uppercase px-1 rounded bg-slate-800 text-slate-300">
+                      {tx.nature}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="text-right">
+                    <span
+                      className={clsx(
+                        'text-xs font-bold block',
+                        tx.nature === 'INCOME'
+                          ? 'text-emerald-400'
+                          : tx.nature === 'INVESTMENT'
+                          ? 'text-cyan-400'
+                          : 'text-slate-100'
+                      )}
+                    >
+                      {isPositive ? `+ ${formatCurrency(tx.amount)}` : formatCurrency(tx.amount)}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block">
+                      {tx.taxTreatment === 'TAXABLE_INCOME'
+                        ? 'Tributável'
+                        : tx.taxTreatment === 'NO_TAX_EFFECT'
+                        ? 'Sem efeito'
+                        : tx.taxTreatment === 'REVIEW'
+                        ? 'Revisar fiscal'
+                        : tx.taxTreatment}
+                    </span>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 
-      {/* Bottom Sheet Modal for Editing Classifications */}
+      {/* Modal de Detalhe e Reclassificação (FIN-004 e TAX-001) */}
       {selectedTx && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end justify-center">
-          <div className="w-full max-w-md bg-slate-900 border-t border-slate-800 rounded-t-2xl p-5 flex flex-col gap-4 animate-slideUp">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-md bg-slate-900 border border-slate-800 rounded-t-2xl sm:rounded-2xl p-5 shadow-2xl flex flex-col gap-4 animate-slideUp">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
-                <h3 className="text-sm font-bold text-white truncate max-w-[280px]">
-                  {selectedTx.description}
-                </h3>
-                <span className="text-xs text-slate-400">
-                  {formatCurrency(selectedTx.amount)} • {selectedTx.accountName}
-                </span>
+                <h3 className="text-sm font-bold text-white">Editar Classificação</h3>
+                <p className="text-[11px] text-slate-400">Separação financeira e fiscal (TAX-001)</p>
               </div>
               <button
                 onClick={() => setSelectedTx(null)}
                 className="p-1 rounded-lg text-slate-400 hover:text-white"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Financial Classification */}
+            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex justify-between items-center">
+              <div>
+                <span className="text-xs font-semibold text-slate-100 block truncate max-w-[200px]">
+                  {selectedTx.description}
+                </span>
+                <span className="text-[10px] text-slate-400">{formatDate(selectedTx.date)}</span>
+              </div>
+              <span className="text-sm font-bold text-white">
+                {formatCurrency(selectedTx.amount)}
+              </span>
+            </div>
+
+            {/* Natureza Financeira */}
             <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                Classificação Financeira
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
+                Natureza Financeira
               </label>
               <select
                 value={selectedTx.nature}
                 onChange={(e) =>
-                  setSelectedTx({ ...selectedTx, nature: e.target.value as TransactionNature })
+                  setSelectedTx({
+                    ...selectedTx,
+                    nature: e.target.value as TransactionNature,
+                  })
                 }
-                className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-950 border border-slate-800 text-xs text-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
               >
-                <option value="INCOME">Receita (INCOME)</option>
-                <option value="EXPENSE">Despesa (EXPENSE)</option>
+                <option value="INCOME">Receita / Entrada (INCOME)</option>
+                <option value="EXPENSE">Gasto de Consumo (EXPENSE)</option>
                 <option value="TRANSFER">Transferência Própria (TRANSFER)</option>
                 <option value="CARD_PAYMENT">Pagamento de Fatura (CARD_PAYMENT)</option>
                 <option value="INVESTMENT">Aporte em Investimento (INVESTMENT)</option>
-                <option value="REFUND">Reembolso / Estorno (REFUND)</option>
-                <option value="UNKNOWN">Não Identificado (UNKNOWN)</option>
+                <option value="REFUND">Estorno / Devolução (REFUND)</option>
+                <option value="IGNORE">Ignorar dos Cálculos (IGNORE)</option>
               </select>
             </div>
 
-            {/* Fiscal Classification */}
+            {/* Tratamento Fiscal Independente */}
             <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                Classificação Fiscal (IR)
+              <label className="text-xs font-semibold text-slate-300 block mb-1">
+                Tratamento Fiscal (IRPF)
               </label>
               <select
                 value={selectedTx.taxTreatment}
                 onChange={(e) =>
-                  setSelectedTx({ ...selectedTx, taxTreatment: e.target.value as TaxTreatment })
+                  setSelectedTx({
+                    ...selectedTx,
+                    taxTreatment: e.target.value as TaxTreatment,
+                  })
                 }
-                className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500"
+                className="w-full bg-slate-950 border border-slate-800 text-xs text-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-500"
               >
+                <option value="REVIEW">Revisar Depois (REVIEW)</option>
                 <option value="TAXABLE_INCOME">Rendimento Tributável</option>
-                <option value="EXEMPT_NON_TAXABLE">Rendimento Isento / Não Tributável</option>
+                <option value="EXEMPT_NON_TAXABLE">Rendimento Isento e Não Tributável</option>
                 <option value="EXCLUSIVE_DEFINITIVE">Tributação Exclusiva / Definitiva</option>
                 <option value="DEDUCTIBLE_EXPENSE">Despesa Dedutível</option>
-                <option value="TAX_WITHHELD">Imposto Retido na Fonte</option>
                 <option value="ASSET_MOVEMENT">Movimentação Patrimonial</option>
                 <option value="NO_TAX_EFFECT">Sem Efeito Fiscal</option>
-                <option value="REVIEW">Precisa Revisar (REVIEW)</option>
               </select>
             </div>
 
-            {/* Save rule checkbox */}
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="rule"
-                checked={saveAsRule}
-                onChange={(e) => setSaveAsRule(e.target.checked)}
-                className="rounded border-slate-800 bg-slate-950 text-emerald-500 focus:ring-0"
-              />
-              <label htmlFor="rule" className="text-xs text-slate-300">
-                Sempre classificar assim para este estabelecimento
-              </label>
+            <div className="pt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedTx(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-800 text-xs text-slate-300 hover:text-white"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveClassification}
+                disabled={isSaving}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-500 text-slate-950 text-xs font-bold hover:bg-emerald-400 transition-colors flex items-center justify-center gap-1.5"
+              >
+                {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                <span>Salvar</span>
+              </button>
             </div>
-
-            {/* Confirm button */}
-            <button
-              onClick={handleSaveClassification}
-              className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-450 text-slate-950 font-bold text-xs transition-colors flex items-center justify-center gap-1.5"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              Confirmar Classificação
-            </button>
           </div>
         </div>
       )}
