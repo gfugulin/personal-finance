@@ -1,4 +1,4 @@
-import { RefreshCw, TrendingUp, AlertCircle, ShieldCheck, Wallet, CreditCard } from 'lucide-react';
+import { RefreshCw, TrendingUp, AlertCircle, ShieldCheck, Wallet, CreditCard, Tag, CalendarClock, ArrowUpRight, ArrowDownRight, CheckCircle2 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchUserFinancialSummary } from '@/server/db/dashboard';
 
@@ -22,7 +22,12 @@ export default async function HojePage() {
     monthInvested: 0,
     savingsRate: 0,
     pendingReviewsCount: 0,
+    categoryBreakdown: [],
+    recurringSubscriptions: [],
+    totalFixedMonthly: 0,
   };
+
+  const netMonth = (hoje.monthIncome || 0) - (hoje.monthSpending || 0);
 
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
@@ -42,7 +47,7 @@ export default async function HojePage() {
       <div className="flex items-center justify-between pt-2 pb-1">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-white">Hoje</h1>
-          <p className="text-xs text-slate-400">Visão financeira e posição atual</p>
+          <p className="text-xs text-slate-400">Visão financeira e inteligência de gastos</p>
         </div>
         <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-900 border border-slate-800 text-slate-300">
           <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
@@ -96,11 +101,22 @@ export default async function HojePage() {
         </div>
       </div>
 
-      {/* Resumo do Mês (Entrou, Gastou, Investiu) */}
+      {/* Resumo do Mês (Entrou, Gastou, Balanço Líquido) */}
       <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-4">
-        <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">
-          Neste Mês
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+            Fluxo do Mês
+          </h2>
+          <div className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+            netMonth >= 0
+              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+              : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+          }`}>
+            {netMonth >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+            <span>{netMonth >= 0 ? `Superávit ${formatCurrency(netMonth)}` : `Déficit ${formatCurrency(Math.abs(netMonth))}`}</span>
+          </div>
+        </div>
+
         <div className="grid grid-cols-3 gap-2 text-center">
           <div className="p-2 rounded-lg bg-slate-950/50 border border-slate-800/50">
             <span className="text-[11px] text-slate-400">Entrou</span>
@@ -110,7 +126,7 @@ export default async function HojePage() {
           </div>
           <div className="p-2 rounded-lg bg-slate-950/50 border border-slate-800/50">
             <span className="text-[11px] text-slate-400">Gastou</span>
-            <div className="text-sm font-bold text-slate-100 mt-0.5">
+            <div className="text-sm font-bold text-rose-300 mt-0.5">
               {formatCurrency(hoje.monthSpending)}
             </div>
           </div>
@@ -133,6 +149,79 @@ export default async function HojePage() {
           </span>
         </div>
       </div>
+
+      {/* Gastos por Categoria neste Mês */}
+      {hoje.categoryBreakdown && hoje.categoryBreakdown.length > 0 && (
+        <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <Tag className="w-3.5 h-3.5 text-indigo-400" />
+              <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                Gastos por Categoria
+              </h2>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              Total {formatCurrency(hoje.monthSpending)}
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {hoje.categoryBreakdown.slice(0, 5).map((cat: any) => (
+              <div key={cat.category} className="flex flex-col gap-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-300 font-medium">{cat.category}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-100 font-semibold">{formatCurrency(cat.total)}</span>
+                    <span className="text-[10px] text-slate-500 w-8 text-right">
+                      {cat.percentage.toFixed(0)}%
+                    </span>
+                  </div>
+                </div>
+                <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-indigo-500 h-1.5 rounded-full"
+                    style={{ width: `${Math.min(100, Math.max(5, cat.percentage))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Assinaturas & Custos Fixos Detectados */}
+      {hoje.recurringSubscriptions && hoje.recurringSubscriptions.length > 0 && (
+        <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-1.5">
+              <CalendarClock className="w-3.5 h-3.5 text-cyan-400" />
+              <h2 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                Assinaturas & Custos Fixos
+              </h2>
+            </div>
+            <span className="text-[11px] font-semibold text-cyan-400">
+              {formatCurrency(hoje.totalFixedMonthly)}/mês
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            {hoje.recurringSubscriptions.map((sub: any) => (
+              <div
+                key={sub.name}
+                className="flex items-center justify-between p-2.5 rounded-lg bg-slate-950/60 border border-slate-800/60"
+              >
+                <div>
+                  <span className="text-xs font-semibold text-slate-200 block">{sub.name}</span>
+                  <span className="text-[10px] text-slate-500">{sub.category} • Mensal</span>
+                </div>
+                <span className="text-xs font-bold text-slate-100">
+                  {formatCurrency(sub.amount)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Alerta de Revisão Pendente */}
       {hoje.pendingReviewsCount > 0 && (

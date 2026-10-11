@@ -54,7 +54,7 @@ export async function fetchUserFinancialSummary() {
   // 3. Fetch Transactions
   const { data: transactionsData } = await supabase
     .from('transactions')
-    .select('id, amount, nature, tax_treatment, transaction_date, description, merchant_name, account_id, category_id')
+    .select('id, amount, nature, tax_treatment, transaction_date, description, merchant_name, account_id, category_id, provider_category')
     .eq('user_id', user.id)
     .order('transaction_date', { ascending: false });
 
@@ -68,6 +68,7 @@ export async function fetchUserFinancialSummary() {
     merchant_name: t.merchant_name,
     account_id: t.account_id,
     category_id: t.category_id,
+    provider_category: t.provider_category,
   }));
 
   // 4. Fetch Profile (para reserve_floor)

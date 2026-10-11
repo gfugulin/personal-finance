@@ -100,4 +100,95 @@ describe('Financial Aggregators (M3, M4 & M5 View Models)', () => {
     expect(ir.pendingReviewsCount).toBe(1);
     expect(ir.estimate.taxDue).toBe(0); // Under exemption threshold
   });
+
+  it('calculates category breakdown and recurring subscriptions correctly', () => {
+    const expenseTxs = [
+      {
+        id: 'tx-gas-1',
+        description: 'Auto Posto Shell Ipiranga',
+        amount: -250,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-02T10:00:00Z',
+        provider_category: 'Transporte',
+      },
+      {
+        id: 'tx-gas-2',
+        description: 'Posto Graal Combustiveis',
+        amount: -150,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-15T15:00:00Z',
+      },
+      {
+        id: 'tx-net-sep',
+        description: 'Netflix.com',
+        amount: -55.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-09-10T08:00:00Z',
+      },
+      {
+        id: 'tx-net-oct',
+        description: 'Netflix.com',
+        amount: -55.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-10T08:00:00Z',
+      },
+      {
+        id: 'tx-spot-sep',
+        description: 'Spotify Premium',
+        amount: -34.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-09-05T08:00:00Z',
+      },
+      {
+        id: 'tx-spot-oct',
+        description: 'Spotify Premium',
+        amount: -34.9,
+        nature: 'EXPENSE' as const,
+        tax_treatment: 'NO_TAX_EFFECT' as const,
+        transaction_date: '2026-10-05T08:00:00Z',
+      },
+    ];
+
+    const hoje = aggregateHojeData(accounts, expenseTxs, 0);
+
+    // 1. Category breakdown deve agrupar os gastos de combustível
+    expect(hoje.categoryBreakdown.length).toBeGreaterThan(0);
+    const gasCategory = hoje.categoryBreakdown.find((c) =>
+      c.category.toLowerCase().includes('combustível') || c.category.toLowerCase().includes('transporte')
+    );
+    expect(gasCategory).toBeDefined();
+    expect(gasCategory?.total).toBe(400); // 250 + 150
+
+    // 2. Subscriptions detectadas (Netflix e Spotify cobrados em meses distintos com mesmo valor)
+    expect(hoje.recurringSubscriptions.length).toBe(2);
+    expect(hoje.totalFixedMonthly).toBeCloseTo(55.9 + 34.9, 2);
+  });
+
+  it('calculates investment yield / profit correctly in Patrimonio', () => {
+    const investmentsWithYield = [
+      {
+        id: 'inv-1',
+        name: 'Tesouro Selic 2029',
+        current_value: 30000,
+        contributed_value: 28000,
+      },
+      {
+        id: 'inv-2',
+        name: 'CDB 110% CDI',
+        current_value: 12500,
+        contributed_value: 12000,
+      },
+    ];
+
+    const pat = aggregatePatrimonioData(accounts, investmentsWithYield, transactions);
+
+    expect(pat.investmentsProfit).toBe(2500); // (30000 - 28000) + (12500 - 12000)
+    expect(pat.investmentsYieldRate).toBeCloseTo(2500 / 40000, 3); // 2500 / 40000 = 6.25%
+  });
 });
+

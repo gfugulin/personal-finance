@@ -32,7 +32,177 @@ export interface TransactionRecord {
   merchant_name?: string | null;
   account_id?: string;
   category_id?: string | null;
+  provider_category?: string | null;
   reviewed?: boolean;
+}
+
+export interface CategoryBreakdownItem {
+  category: string;
+  total: number;
+  count: number;
+  percentage: number;
+}
+
+export interface RecurringSubscriptionItem {
+  name: string;
+  amount: number;
+  frequency: 'MONTHLY';
+  lastDate: string;
+  category: string;
+}
+
+/**
+ * Heurística de categorização automática baseada em palavras-chave e provider_category
+ */
+export function inferCategoryName(description?: string, providerCategory?: string | null): string {
+  const desc = (description || '').toLowerCase();
+  const prov = (providerCategory || '').toLowerCase();
+
+  if (
+    desc.includes('posto') ||
+    desc.includes('combustivel') ||
+    desc.includes('gasolina') ||
+    desc.includes('etanol') ||
+    desc.includes('shell') ||
+    desc.includes('ipiranga') ||
+    desc.includes('graal') ||
+    prov.includes('combustivel')
+  ) {
+    return 'Transporte / Combustível';
+  }
+
+  if (
+    desc.includes('uber') ||
+    desc.includes('99app') ||
+    desc.includes('99pop') ||
+    desc.includes('cabify') ||
+    desc.includes('taxi') ||
+    prov.includes('transporte')
+  ) {
+    return 'Transporte / Mobilidade';
+  }
+
+  if (
+    desc.includes('mercado') ||
+    desc.includes('supermercado') ||
+    desc.includes('carrefour') ||
+    desc.includes('pao de acucar') ||
+    desc.includes('assai') ||
+    desc.includes('atacadista') ||
+    desc.includes('hortifruti') ||
+    desc.includes('extra') ||
+    prov.includes('mercado') ||
+    prov.includes('supermercado')
+  ) {
+    return 'Alimentação / Supermercado';
+  }
+
+  if (
+    desc.includes('ifood') ||
+    desc.includes('rappi') ||
+    desc.includes('restaurante') ||
+    desc.includes('mcdonald') ||
+    desc.includes('burger king') ||
+    desc.includes('padaria') ||
+    desc.includes('lanchonete') ||
+    prov.includes('refeicao') ||
+    prov.includes('restaurante')
+  ) {
+    return 'Alimentação / Refeições';
+  }
+
+  if (
+    desc.includes('netflix') ||
+    desc.includes('spotify') ||
+    desc.includes('amazon prime') ||
+    desc.includes('prime video') ||
+    desc.includes('disney') ||
+    desc.includes('hbo') ||
+    desc.includes('youtube') ||
+    desc.includes('apple') ||
+    prov.includes('streaming') ||
+    prov.includes('assinatura')
+  ) {
+    return 'Serviços / Assinaturas';
+  }
+
+  if (
+    desc.includes('farmacia') ||
+    desc.includes('drogaria') ||
+    desc.includes('drogasil') ||
+    desc.includes('raia') ||
+    prov.includes('saude') ||
+    prov.includes('farmacia')
+  ) {
+    return 'Saúde / Farmácia';
+  }
+
+  if (providerCategory && providerCategory.trim().length > 0) {
+    return providerCategory.trim();
+  }
+
+  return 'Outros Gastos';
+}
+
+/**
+ * Heurística para detecção de despesas recorrentes / assinaturas
+ */
+export function detectRecurringExpenses(transactions: TransactionRecord[]): RecurringSubscriptionItem[] {
+  const expenseTxs = transactions.filter((t) => t.nature === 'EXPENSE');
+
+  // Normaliza o nome para agrupar ocorrências
+  const normalizeRoot = (name: string) => {
+    return name
+      .toLowerCase()
+      .replace(/\.com(\.br)?/g, '')
+      .replace(/[\d\-_\/]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const groups = new Map<string, TransactionRecord[]>();
+
+  for (const tx of expenseTxs) {
+    const rawName = tx.merchant_name || tx.description || 'Despesa';
+    const key = normalizeRoot(rawName);
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key)!.push(tx);
+  }
+
+  const subscriptions: RecurringSubscriptionItem[] = [];
+
+  for (const [key, txs] of Array.from(groups.entries())) {
+    if (txs.length < 2) continue;
+
+    // Verificar se ocorrem em meses distintos
+    const months = new Set(txs.map((t) => t.transaction_date.slice(0, 7))); // YYYY-MM
+    if (months.size < 2) continue;
+
+    // Verificar variação dos valores
+    const amounts = txs.map((t) => Math.abs(Number(t.amount) || 0));
+    const minAmt = Math.min(...amounts);
+    const maxAmt = Math.max(...amounts);
+
+    // Se a variação de valor for menor que 10% ou R$ 5, consideramos assinatura/custo fixo
+    if (minAmt > 0 && (maxAmt - minAmt) / minAmt <= 0.1) {
+      // Ordena por data decrescente para pegar a última ocorrência e nome mais recente
+      txs.sort((a, b) => new Date(b.transaction_date).getTime() - new Date(a.transaction_date).getTime());
+      const latestTx = txs[0];
+      const displayName = latestTx.merchant_name || latestTx.description || key;
+
+      subscriptions.push({
+        name: displayName,
+        amount: Math.abs(Number(latestTx.amount) || 0),
+        frequency: 'MONTHLY',
+        lastDate: latestTx.transaction_date,
+        category: inferCategoryName(latestTx.description, latestTx.provider_category),
+      });
+    }
+  }
+
+  return subscriptions;
 }
 
 /**
@@ -70,15 +240,26 @@ export function aggregateHojeData(
   let monthInvested = 0;
   let pendingReviewsCount = 0;
 
+  const categoryTotals = new Map<string, { total: number; count: number }>();
+
   for (const tx of transactions) {
     const amt = Number(tx.amount) || 0;
+    const absAmt = Math.abs(amt);
 
     if (tx.nature === 'INCOME') {
-      monthIncome += Math.abs(amt);
+      monthIncome += absAmt;
     } else if (tx.nature === 'EXPENSE') {
-      monthSpending += Math.abs(amt);
+      monthSpending += absAmt;
+
+      // Agrupa na categoria
+      const cat = inferCategoryName(tx.description, tx.provider_category);
+      const currentCat = categoryTotals.get(cat) || { total: 0, count: 0 };
+      categoryTotals.set(cat, {
+        total: currentCat.total + absAmt,
+        count: currentCat.count + 1,
+      });
     } else if (tx.nature === 'INVESTMENT') {
-      monthInvested += Math.abs(amt);
+      monthInvested += absAmt;
     }
 
     if (tx.tax_treatment === 'REVIEW' || tx.nature === 'UNKNOWN') {
@@ -89,6 +270,20 @@ export function aggregateHojeData(
   // 5. Taxa de poupança (FIN-008)
   const savingsRate = calculateSavingsRate(monthIncome, monthSpending) ?? 0;
 
+  // 6. Category breakdown
+  const categoryBreakdown: CategoryBreakdownItem[] = Array.from(categoryTotals.entries())
+    .map(([category, data]) => ({
+      category,
+      total: data.total,
+      count: data.count,
+      percentage: monthSpending > 0 ? (data.total / monthSpending) * 100 : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  // 7. Despesas Recorrentes / Assinaturas (Heurística Automática)
+  const recurringSubscriptions = detectRecurringExpenses(transactions);
+  const totalFixedMonthly = recurringSubscriptions.reduce((sum, s) => sum + s.amount, 0);
+
   return {
     freeMoney,
     bankCash,
@@ -98,6 +293,9 @@ export function aggregateHojeData(
     monthInvested,
     savingsRate,
     pendingReviewsCount,
+    categoryBreakdown,
+    recurringSubscriptions,
+    totalFixedMonthly,
   };
 }
 
@@ -124,6 +322,25 @@ export function aggregatePatrimonioData(
     0
   );
 
+  // Rendimento / Lucro dos investimentos
+  let investmentsProfit = 0;
+  let totalInvestedCost = 0;
+
+  for (const inv of investments) {
+    const current = Number(inv.current_value) || 0;
+    const contributed =
+      inv.contributed_value !== null && inv.contributed_value !== undefined
+        ? Number(inv.contributed_value)
+        : null;
+
+    if (contributed !== null && contributed > 0) {
+      investmentsProfit += current - contributed;
+      totalInvestedCost += contributed;
+    }
+  }
+
+  const investmentsYieldRate = totalInvestedCost > 0 ? investmentsProfit / totalInvestedCost : 0;
+
   // FIN-007: Net worth = cash + investments - card liability
   const netWorth = calculateNetWorth({
     cash,
@@ -139,6 +356,8 @@ export function aggregatePatrimonioData(
   return {
     cash,
     investments: investmentsTotal,
+    investmentsProfit,
+    investmentsYieldRate,
     cardLiability,
     netWorth,
     contributionsThisMonth,

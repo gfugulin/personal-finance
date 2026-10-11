@@ -21,6 +21,8 @@ interface InvestmentItem {
   id: string;
   name?: string | null;
   current_value: number;
+  contributed_value?: number | null;
+  type?: string | null;
 }
 
 export default function PatrimonioPage() {
@@ -38,6 +40,8 @@ export default function PatrimonioPage() {
   // Real data state
   const [cash, setCash] = useState<number>(0);
   const [investments, setInvestments] = useState<number>(0);
+  const [investmentsProfit, setInvestmentsProfit] = useState<number>(0);
+  const [investmentsYieldRate, setInvestmentsYieldRate] = useState<number>(0);
   const [cardLiability, setCardLiability] = useState<number>(0);
   const [netWorth, setNetWorth] = useState<number>(0);
   const [contributionsThisMonth, setContributionsThisMonth] = useState<number>(0);
@@ -66,6 +70,8 @@ export default function PatrimonioPage() {
         const p = data.patrimonio || {};
         setCash(p.cash || 0);
         setInvestments(p.investments || 0);
+        setInvestmentsProfit(p.investmentsProfit || 0);
+        setInvestmentsYieldRate(p.investmentsYieldRate || 0);
         setCardLiability(p.cardLiability || 0);
         setNetWorth(p.netWorth || 0);
         setContributionsThisMonth(p.contributionsThisMonth || 0);
@@ -236,21 +242,55 @@ export default function PatrimonioPage() {
         </h2>
 
         {/* Investimentos */}
-        <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/70 border border-slate-800">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-              <Landmark className="w-4 h-4" />
+        <div className="flex flex-col rounded-xl bg-slate-900/70 border border-slate-800 p-3.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                <Landmark className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-xs font-semibold text-slate-100 block">Investimentos</span>
+                <span className="text-[11px] text-slate-400">
+                  {investmentsList.length > 0 ? `${investmentsList.length} ativo(s)` : 'Renda Fixa, Ações e Fundos'}
+                </span>
+              </div>
             </div>
-            <div>
-              <span className="text-xs font-semibold text-slate-100 block">Investimentos</span>
-              <span className="text-[11px] text-slate-400">
-                {investmentsList.length > 0 ? `${investmentsList.length} ativo(s)` : 'Renda Fixa, Ações e Fundos'}
+            <div className="text-right">
+              <span className="text-xs font-bold text-slate-100 block">
+                {formatCurrency(investments)}
               </span>
+              {investmentsProfit !== 0 && (
+                <span className={`text-[10px] font-semibold ${investmentsProfit > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {investmentsProfit > 0 ? '+' : ''}{formatCurrency(investmentsProfit)} ({(investmentsYieldRate * 100).toFixed(1)}%)
+                </span>
+              )}
             </div>
           </div>
-          <span className="text-xs font-bold text-slate-100">
-            {formatCurrency(investments)}
-          </span>
+
+          {/* Lista detalhada de ativos */}
+          {investmentsList.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-slate-800/60 flex flex-col gap-2">
+              {investmentsList.map((inv) => {
+                const profit = inv.contributed_value ? Number(inv.current_value) - Number(inv.contributed_value) : null;
+                return (
+                  <div key={inv.id} className="flex items-center justify-between text-xs py-1">
+                    <div>
+                      <span className="text-slate-300 font-medium block">{inv.name || 'Ativo'}</span>
+                      <span className="text-[10px] text-slate-500">{inv.type || 'Investimento'}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-slate-100 font-semibold block">{formatCurrency(inv.current_value)}</span>
+                      {profit !== null && profit !== 0 && (
+                        <span className={`text-[10px] font-semibold ${profit > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {profit > 0 ? '+' : ''}{formatCurrency(profit)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Dinheiro em Conta */}
