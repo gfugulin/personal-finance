@@ -28,22 +28,26 @@ export async function processPluggyWebhook(
 
   // 2. Check Idempotency by eventId if provided
   if (eventId) {
-    const { data: existing } = await supabase
-      .from('processed_webhook_events')
-      .select('event_id')
-      .eq('event_id', eventId)
-      .maybeSingle();
+    try {
+      const { data: existing } = await supabase
+        .from('processed_webhook_events')
+        .select('event_id')
+        .eq('event_id', eventId)
+        .maybeSingle();
 
-    if (existing) {
-      return { success: true, message: 'Event already processed', duplicate: true };
+      if (existing) {
+        return { success: true, message: 'Event already processed', duplicate: true };
+      }
+
+      // Record receipt
+      await supabase.from('processed_webhook_events').insert({
+        event_id: eventId,
+        event_type: eventType || 'unknown',
+        status: 'PROCESSING',
+      });
+    } catch (dbErr) {
+      console.warn('Database logging warning for webhook eventId:', dbErr);
     }
-
-    // Record receipt
-    await supabase.from('processed_webhook_events').insert({
-      event_id: eventId,
-      event_type: eventType || 'unknown',
-      status: 'PROCESSING',
-    });
   }
 
   // 3. Process events
