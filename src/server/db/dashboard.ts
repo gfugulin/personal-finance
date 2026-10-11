@@ -117,30 +117,42 @@ export async function fetchUserTransactions() {
     throw new Error('Usuário não autenticado');
   }
 
+  // Buscar contas do usuário para mapear os nomes com segurança sem depender de join PostgREST
+  const { data: accountsData } = await supabase
+    .from('accounts')
+    .select('id, name, type')
+    .eq('user_id', user.id);
+
+  const accountMap = new Map((accountsData || []).map((a) => [a.id, a]));
+
   const { data: txs, error } = await supabase
     .from('transactions')
-    .select('id, external_transaction_id, description, merchant_name, amount, currency_code, transaction_date, status, nature, tax_treatment, accounts(name, type)')
+    .select('id, external_transaction_id, description, merchant_name, amount, currency_code, transaction_date, status, nature, tax_treatment, account_id')
     .eq('user_id', user.id)
     .order('transaction_date', { ascending: false })
     .limit(300);
 
   if (error) {
+    console.error('Erro ao consultar transactions no Supabase:', error);
     throw new Error(`Erro ao carregar movimentações: ${error.message}`);
   }
 
-  return (txs || []).map((t: any) => ({
-    id: t.id,
-    description: t.description,
-    merchantName: t.merchant_name,
-    amount: Number(t.amount) || 0,
-    currencyCode: t.currency_code,
-    date: t.transaction_date,
-    nature: t.nature as TransactionNature,
-    taxTreatment: t.tax_treatment as TaxTreatment,
-    accountName: t.accounts?.name || 'Conta Bancária',
-    accountType: t.accounts?.type,
-    reviewed: t.tax_treatment !== 'REVIEW' && t.nature !== 'UNKNOWN',
-  }));
+  return (txs || []).map((t: any) => {
+    const acc = accountMap.get(t.account_id);
+    return {
+      id: t.id,
+      description: t.description,
+      merchantName: t.merchant_name,
+      amount: Number(t.amount) || 0,
+      currencyCode: t.currency_code,
+      date: t.transaction_date,
+      nature: t.nature as TransactionNature,
+      taxTreatment: t.tax_treatment as TaxTreatment,
+      accountName: acc?.name || 'Conta Bancária',
+      accountType: acc?.type,
+      reviewed: t.tax_treatment !== 'REVIEW' && t.nature !== 'UNKNOWN',
+    };
+  });
 }
 
 export async function updateUserTransactionClassification(

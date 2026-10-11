@@ -32,6 +32,8 @@ export default function PatrimonioPage() {
   const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
   const [institutionName, setInstitutionName] = useState<string | null>(null);
+  const [connectedItemId, setConnectedItemId] = useState<string | null>(null);
+  const [isCleaning, setIsCleaning] = useState(false);
 
   // Real data state
   const [cash, setCash] = useState<number>(0);
@@ -72,6 +74,7 @@ export default function PatrimonioPage() {
         setInstitutionName(data.institutionName || null);
         setConnectionStatus(data.connectionStatus || null);
         setLastSuccessfulSyncAt(data.lastSuccessfulSyncAt || null);
+        setConnectedItemId(data.itemId || null);
 
         if (data.lastSyncAt) {
           const diff = Math.floor((Date.now() - new Date(data.lastSyncAt).getTime()) / 60000);
@@ -82,6 +85,25 @@ export default function PatrimonioPage() {
       console.warn('Erro ao carregar patrimônio:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleCleanupSandbox = async () => {
+    if (!confirm('Deseja remover as conexões e contas de teste antigas do Sandbox?')) return;
+    try {
+      setIsCleaning(true);
+      const res = await fetch('/api/connections/cleanup', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`Limpeza concluída! ${data.cleanedCount || 0} conexão(ões) do Sandbox removida(s).`);
+        await loadPatrimonioData();
+      } else {
+        alert('Erro ao limpar sandbox: ' + (data.error || 'Falha'));
+      }
+    } catch (err: any) {
+      alert('Erro na requisição: ' + err.message);
+    } finally {
+      setIsCleaning(false);
     }
   };
 
@@ -339,6 +361,26 @@ export default function PatrimonioPage() {
           <p className="text-[10px] text-slate-500">
             Os dados do Nubank são sincronizados continuamente pelo conector Meu Pluggy via webhooks seguros, sem necessidade de atualização manual.
           </p>
+
+          <div className="flex gap-2 pt-1 border-t border-slate-800/60">
+            <button
+              onClick={() => connectedItemId && processItemSync(connectedItemId, 'UPDATED')}
+              disabled={isSyncing}
+              className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+            >
+              {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" /> : <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />}
+              <span>Sincronizar Extrato Agora</span>
+            </button>
+
+            <button
+              onClick={handleCleanupSandbox}
+              disabled={isCleaning}
+              className="py-2 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 text-xs font-medium transition-colors disabled:opacity-50"
+              title="Remove as contas e investimentos de teste criados anteriormente no Sandbox"
+            >
+              {isCleaning ? 'Limpando...' : 'Limpar Sandbox Antigo'}
+            </button>
+          </div>
         </div>
       ) : (
         /* Seção para Conectar o Conector MeuPluggy */
