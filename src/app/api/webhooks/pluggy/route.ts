@@ -10,9 +10,9 @@ export async function POST(req: NextRequest) {
     const url = new URL(req.url);
     const querySecret = url.searchParams.get('secret');
 
+    // Strict header validation: prioritize X-Finance-Webhook-Secret
     const secretHeader =
       req.headers.get('x-finance-webhook-secret') ||
-      req.headers.get('x-webhook-secret') ||
       req.headers.get('authorization') ||
       querySecret;
 
@@ -20,11 +20,11 @@ export async function POST(req: NextRequest) {
     try {
       payload = await req.json();
     } catch {
-      // Handshake or empty ping payload
+      // Empty ping or health check
       return NextResponse.json({ received: true, note: 'empty ping' }, { status: 200 });
     }
 
-    // Handshake or verification test from Pluggy dashboard
+    // Isolated treatment for test ping
     if (!payload?.event || payload?.event === 'test' || payload?.event === 'ping') {
       return NextResponse.json({ received: true, test: true }, { status: 200 });
     }
@@ -33,12 +33,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result, { status: 200 });
   } catch (err: any) {
     if (err.message === 'Invalid webhook secret') {
-      // In development or if Pluggy test ping doesn't forward headers, log and return informative error
-      console.warn('Webhook secret mismatch:', err.message);
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'Unauthorized: Invalid webhook secret' }, { status: 401 });
     }
-    console.error('Webhook processing error:', err);
-    // Respond 200 to prevent webhook deactivation if non-fatal
-    return NextResponse.json({ received: true, warning: err.message }, { status: 200 });
+    console.error('Webhook error:', err);
+    return NextResponse.json({ error: err.message || 'Webhook failed' }, { status: 500 });
   }
 }

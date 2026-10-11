@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Landmark, TrendingUp, CreditCard, Wallet, PlusCircle, CheckCircle2 } from 'lucide-react';
+import { Landmark, TrendingUp, CreditCard, Wallet, PlusCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
 // Dynamically load PluggyConnect to avoid SSR document/window issues
@@ -13,7 +13,9 @@ const PluggyConnect = dynamic(
 export default function PatrimonioPage() {
   const [connectToken, setConnectToken] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [connectedSuccess, setConnectedSuccess] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
 
   // Core metrics
   const cash = 5320.0;
@@ -28,6 +30,7 @@ export default function PatrimonioPage() {
   const handleStartConnect = async () => {
     try {
       setIsConnecting(true);
+      setSyncStatus(null);
       const res = await fetch('/api/connect-token', { method: 'POST' });
       const data = await res.json();
       if (data.accessToken) {
@@ -42,12 +45,50 @@ export default function PatrimonioPage() {
     }
   };
 
+  const handleSuccess = async (itemData: any) => {
+    const itemId = itemData?.item?.id || itemData?.itemId;
+    setConnectToken(null);
+
+    if (itemId) {
+      try {
+        setIsSyncing(true);
+        setSyncStatus('Sincronizando contas, cartões e transações...');
+        const res = await fetch('/api/connections/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ itemId }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setSyncStatus(`Sincronização concluída com sucesso (${data.accountsCount || 0} contas importadas)!`);
+          setLastSyncDate('Agora mesmo');
+        } else {
+          setSyncStatus('Conexão autorizada. Dados sendo processados via webhook.');
+        }
+      } catch {
+        setSyncStatus('Conexão realizada! Concluindo sincronização em segundo plano.');
+      } finally {
+        setIsSyncing(false);
+      }
+    } else {
+      setSyncStatus('Conexão bancária autorizada.');
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4 animate-fadeIn">
       {/* Header */}
-      <div className="pt-2">
-        <h1 className="text-xl font-bold tracking-tight text-white">Patrimônio</h1>
-        <p className="text-xs text-slate-400">Evolução patrimonial e composição líquida</p>
+      <div className="pt-2 flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-white">Patrimônio</h1>
+          <p className="text-xs text-slate-400">Evolução patrimonial e composição líquida</p>
+        </div>
+        {lastSyncDate && (
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-slate-400 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3 text-emerald-400" />
+            {lastSyncDate}
+          </span>
+        )}
       </div>
 
       {/* Patrimônio Líquido Total Card (FIN-007) */}
@@ -129,33 +170,46 @@ export default function PatrimonioPage() {
             <h3 className="text-xs font-bold text-slate-200">Open Finance (Pluggy Sandbox)</h3>
             <p className="text-[11px] text-slate-400">Conecte o Pluggy Bank para testes locais</p>
           </div>
-          {connectedSuccess && (
-            <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Conectado
-            </span>
-          )}
         </div>
+
+        {syncStatus && (
+          <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-2 text-xs">
+            {isSyncing ? (
+              <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            )}
+            <span className="text-slate-300">{syncStatus}</span>
+          </div>
+        )}
 
         {!connectToken ? (
           <button
             onClick={handleStartConnect}
-            disabled={isConnecting}
-            className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 font-semibold text-xs border border-slate-700 transition-colors flex items-center justify-center gap-2"
+            disabled={isConnecting || isSyncing}
+            className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 font-semibold text-xs border border-slate-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            <PlusCircle className="w-4 h-4 text-emerald-400" />
-            {isConnecting ? 'Obtendo Token...' : 'Conectar Banco no Sandbox'}
+            {isConnecting ? (
+              <>
+                <Loader2 className="w-4 h-4 text-emerald-400 animate-spin" />
+                <span>Gerando Connect Token...</span>
+              </>
+            ) : (
+              <>
+                <PlusCircle className="w-4 h-4 text-emerald-400" />
+                <span>Conectar Banco no Sandbox</span>
+              </>
+            )}
           </button>
         ) : (
           <div className="p-2 bg-slate-950 rounded-lg border border-slate-800">
             <PluggyConnect
               connectToken={connectToken}
               includeSandbox={true}
-              onSuccess={(itemData: any) => {
-                setConnectedSuccess(true);
-                setConnectToken(null);
-              }}
+              onSuccess={handleSuccess}
               onError={(error: any) => {
                 console.error('Pluggy connection error:', error);
+                setSyncStatus('Erro na conexão com o banco.');
                 setConnectToken(null);
               }}
               onClose={() => setConnectToken(null)}

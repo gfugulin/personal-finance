@@ -13,7 +13,9 @@ vi.mock('../src/server/db/supabase', () => ({
 
 vi.mock('../src/server/integrations/pluggy/client', () => ({
   getPluggyClient: () => ({
-    fetchItem: vi.fn().mockResolvedValue({ status: 'UPDATED' }),
+    fetchItem: vi.fn().mockResolvedValue({ status: 'UPDATED', connector: { name: 'Pluggy Bank' } }),
+    fetchAccounts: vi.fn().mockResolvedValue({ results: [] }),
+    fetchInvestments: vi.fn().mockResolvedValue({ results: [] }),
   }),
 }));
 
@@ -38,6 +40,11 @@ describe('Security & Webhook Idempotency (SPEC 002, 005, SEC)', () => {
       insert: vi.fn().mockResolvedValue({ data: null }),
       update: () => ({
         eq: vi.fn().mockResolvedValue({ data: null }),
+      }),
+      upsert: () => ({
+        select: () => ({
+          single: vi.fn().mockResolvedValue({ data: { id: 'conn-1' }, error: null }),
+        }),
       }),
     });
 

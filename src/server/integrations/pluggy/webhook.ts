@@ -1,10 +1,10 @@
-import { getPluggyClient } from './client';
 import { createAdminSupabaseClient } from '@/server/db/supabase';
+import { syncItemData, handleTransactionEvent } from './sync';
 
 export interface PluggyWebhookPayload {
   event: string;
   eventId?: string;
-  id?: string; // some webhook events pass id
+  id?: string;
   itemId?: string;
   data?: any;
   error?: any;
@@ -14,61 +14,54 @@ export async function processPluggyWebhook(
   payload: PluggyWebhookPayload,
   receivedSecret?: string | null
 ): Promise<{ success: boolean; message: string; duplicate?: boolean }> {
-  // 1. Verify Secret
+  const eventType = payload.event;
+  const isTestOrPing = eventType === 'test' || eventType === 'ping' || !eventType;
+
+  // 1. Mandatory Webhook Secret Verification (SEC-005)
   const expectedSecret = process.env.PLUGGY_WEBHOOK_SECRET;
-  if (expectedSecret && receivedSecret !== expectedSecret) {
-    throw new Error('Invalid webhook secret');
+  if (expectedSecret && !isTestOrPing) {
+    if (!receivedSecret || receivedSecret !== expectedSecret) {
+      throw new Error('Invalid webhook secret');
+    }
+  }
+
+  // Quick return for pure test pings
+  if (isTestOrPing) {
+    return { success: true, message: 'Ping acknowledged' };
   }
 
   const eventId = payload.eventId || payload.id;
-  const eventType = payload.event;
   const itemId = payload.itemId || payload.data?.itemId;
 
   const supabase = createAdminSupabaseClient();
 
-  // 2. Check Idempotency by eventId if provided
+  // 2. Check Idempotency by eventId in public.processed_webhook_events
   if (eventId) {
-    try {
-      const { data: existing } = await supabase
-        .from('processed_webhook_events')
-        .select('event_id')
-        .eq('event_id', eventId)
-        .maybeSingle();
+    const { data: existing } = await supabase
+      .from('processed_webhook_events')
+      .select('event_id')
+      .eq('event_id', eventId)
+      .maybeSingle();
 
-      if (existing) {
-        return { success: true, message: 'Event already processed', duplicate: true };
-      }
-
-      // Record receipt
-      await supabase.from('processed_webhook_events').insert({
-        event_id: eventId,
-        event_type: eventType || 'unknown',
-        status: 'PROCESSING',
-      });
-    } catch (dbErr) {
-      console.warn('Database logging warning for webhook eventId:', dbErr);
+    if (existing) {
+      return { success: true, message: 'Event already processed', duplicate: true };
     }
+
+    // Record initial receipt
+    await supabase.from('processed_webhook_events').insert({
+      event_id: eventId,
+      event_type: eventType,
+      status: 'PROCESSING',
+    });
   }
 
-  // 3. Process events
+  // 3. Authoritative sync and reconciliation
   try {
-    const pluggy = getPluggyClient();
-
     switch (eventType) {
       case 'item/created':
       case 'item/updated': {
         if (itemId) {
-          const item = await pluggy.fetchItem(itemId);
-          await supabase
-            .from('financial_connections')
-            .update({
-              status: item.status === 'UPDATED' ? 'ACTIVE' : (item.status as any),
-              last_sync_at: new Date().toISOString(),
-              last_successful_sync_at: item.status === 'UPDATED' ? new Date().toISOString() : undefined,
-              last_error_code: item.error ? JSON.stringify(item.error.code) : null,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('external_item_id', itemId);
+          await syncItemData(itemId);
         }
         break;
       }
@@ -87,11 +80,19 @@ export async function processPluggyWebhook(
         break;
       }
 
+      case 'transactions/created':
+      case 'transactions/updated':
+      case 'transactions/deleted': {
+        await handleTransactionEvent(eventType, payload);
+        break;
+      }
+
       default:
-        // Transactions and other events
+        console.log(`Unhandled webhook event type: ${eventType}`);
         break;
     }
 
+    // Mark event as processed
     if (eventId) {
       await supabase
         .from('processed_webhook_events')
