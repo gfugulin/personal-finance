@@ -79,10 +79,10 @@ export async function fetchUserFinancialSummary() {
 
   const reserveFloor = profile?.reserve_floor ? Number(profile.reserve_floor) : 0;
 
-  // 5. Fetch Conexão mais recente para last_sync_at
+  // 5. Fetch Conexão mais recente para last_sync_at e status
   const { data: latestConn } = await supabase
     .from('financial_connections')
-    .select('last_sync_at, status')
+    .select('last_sync_at, last_successful_sync_at, status, institution_name, external_item_id')
     .eq('user_id', user.id)
     .order('last_sync_at', { ascending: false })
     .limit(1)
@@ -100,7 +100,10 @@ export async function fetchUserFinancialSummary() {
     hoje,
     patrimonio,
     lastSyncAt: latestConn?.last_sync_at || null,
+    lastSuccessfulSyncAt: latestConn?.last_successful_sync_at || null,
     connectionStatus: latestConn?.status || null,
+    institutionName: latestConn?.institution_name || null,
+    itemId: latestConn?.external_item_id || null,
   };
 }
 

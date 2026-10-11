@@ -115,7 +115,13 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
   }
 
   // Mapear status da conexão conforme lifecycle da Pluggy
-  const institutionName = item.connector?.name || 'Pluggy Bank (Sandbox)';
+  const rawConnectorName = item.connector?.name || '';
+  const isMeuPluggy =
+    rawConnectorName.toLowerCase().includes('meupluggy') ||
+    rawConnectorName.toLowerCase().includes('meu pluggy');
+
+  const institutionName = isMeuPluggy ? 'MeuPluggy' : rawConnectorName || 'Pluggy Bank (Sandbox)';
+
   const statusMap: Record<string, string> = {
     UPDATED: 'ACTIVE',
     UPDATING: 'SYNCING',
@@ -340,3 +346,29 @@ export async function handleTransactionEvent(
 
   return { success: true };
 }
+
+/**
+ * REQ 4 e 10: Garante que itens do conector MeuPluggy NUNCA chamam PATCH /items/{id},
+ * pois proxy items MeuPluggy não suportam atualização manual na Pluggy.
+ */
+export async function updateItemIfEligible(itemId: string) {
+  const pluggy = getPluggyClient();
+  const item = await pluggy.fetchItem(itemId);
+  const connectorName = item.connector?.name || '';
+  const isMeuPluggy =
+    connectorName.toLowerCase().includes('meupluggy') ||
+    connectorName.toLowerCase().includes('meu pluggy');
+
+  if (isMeuPluggy) {
+    return {
+      allowed: false,
+      reason: 'MeuPluggy proxy items do not support manual update via PATCH /items/{id}',
+    };
+  }
+
+  if (typeof (pluggy as any).updateItem === 'function') {
+    await (pluggy as any).updateItem(itemId);
+  }
+  return { allowed: true };
+}
+

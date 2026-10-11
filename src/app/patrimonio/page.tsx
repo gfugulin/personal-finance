@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Landmark, TrendingUp, CreditCard, Wallet, PlusCircle, CheckCircle2, Loader2, RefreshCw, Info } from 'lucide-react';
+import { Landmark, TrendingUp, CreditCard, Wallet, PlusCircle, CheckCircle2, Loader2, RefreshCw, ShieldCheck, Zap } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
 // Dynamically load PluggyConnect to avoid SSR document/window issues
@@ -29,6 +29,9 @@ export default function PatrimonioPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [lastSyncDate, setLastSyncDate] = useState<string | null>(null);
+  const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
+  const [institutionName, setInstitutionName] = useState<string | null>(null);
 
   // Real data state
   const [cash, setCash] = useState<number>(0);
@@ -43,6 +46,16 @@ export default function PatrimonioPage() {
   const formatCurrency = (val: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return 'Pendente';
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    } catch {
+      return dateStr;
+    }
+  };
+
   const loadPatrimonioData = async () => {
     try {
       const res = await fetch('/api/patrimonio');
@@ -56,6 +69,10 @@ export default function PatrimonioPage() {
         setContributionsThisMonth(p.contributionsThisMonth || 0);
         setAccountsList(data.accounts || []);
         setInvestmentsList(data.investments || []);
+        setInstitutionName(data.institutionName || null);
+        setConnectionStatus(data.connectionStatus || null);
+        setLastSuccessfulSyncAt(data.lastSuccessfulSyncAt || null);
+
         if (data.lastSyncAt) {
           const diff = Math.floor((Date.now() - new Date(data.lastSyncAt).getTime()) / 60000);
           setLastSyncDate(diff < 1 ? 'Agora mesmo' : diff < 60 ? `Há ${diff} min` : 'Hoje');
@@ -93,7 +110,7 @@ export default function PatrimonioPage() {
   const processItemSync = async (itemId: string, statusHint?: string) => {
     try {
       setIsSyncing(true);
-      setSyncStatus(`Item criado (${statusHint || 'UPDATING'}). Sincronizando contas e dados...`);
+      setSyncStatus(`Item criado (${statusHint || 'UPDATING'}). Sincronizando contas e dados do Meu Pluggy...`);
       
       const res = await fetch('/api/connections/sync', {
         method: 'POST',
@@ -103,11 +120,11 @@ export default function PatrimonioPage() {
       const data = await res.json();
 
       if (res.status === 200) {
-        setSyncStatus(`Conectado com sucesso! ${data.accountsCount || 0} conta(s) importada(s).`);
+        setSyncStatus(`Conectado com sucesso via Meu Pluggy! ${data.accountsCount || 0} conta(s) importada(s).`);
         setLastSyncDate('Agora mesmo');
         await loadPatrimonioData();
       } else if (res.status === 202) {
-        setSyncStatus('Conexão registrada! O banco está processando as transações no Sandbox via webhook.');
+        setSyncStatus('Conexão registrada! O conector Meu Pluggy está processando os dados via webhook.');
         setLastSyncDate('Em andamento');
         await loadPatrimonioData();
       } else {
@@ -146,10 +163,14 @@ export default function PatrimonioPage() {
     setSyncStatus(
       'Falha no conector: ' +
         (error?.message === 'Item was not sync successfully'
-          ? 'O conector não respondeu a tempo. Se usou Pluggy Bank Sandbox, utilize usuário: user-ok / senha: password-ok.'
+          ? 'O conector não respondeu a tempo. Tente novamente selecionando o conector MeuPluggy.'
           : error?.message || 'Verifique suas credenciais.')
     );
   };
+
+  const isMeuPluggyConnected =
+    institutionName?.toLowerCase().includes('meupluggy') ||
+    institutionName?.toLowerCase().includes('meu pluggy');
 
   return (
     <div className="flex flex-col gap-4 animate-fadeIn">
@@ -285,53 +306,94 @@ export default function PatrimonioPage() {
         </div>
       )}
 
-      {/* Seção de Conexão Open Finance / Pluggy Sandbox */}
-      <div className="mt-2 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 p-4 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xs font-bold text-slate-200">Open Finance (Pluggy Sandbox)</h3>
-            <p className="text-[11px] text-slate-400">Conecte o Pluggy Bank para testes locais</p>
+      {/* REQ 5: Status e Atualização Automática via Meu Pluggy */}
+      {isMeuPluggyConnected ? (
+        <div className="rounded-2xl bg-gradient-to-br from-slate-900 to-emerald-950/20 border border-emerald-900/50 p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-bold text-white">
+                Atualização automática via Meu Pluggy
+              </span>
+            </div>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              {connectionStatus === 'ACTIVE' ? 'Ativo' : connectionStatus || 'Sincronizado'}
+            </span>
           </div>
+
+          <div className="text-[11px] text-slate-400 flex flex-col gap-1 border-t border-slate-800/80 pt-2.5">
+            <div className="flex justify-between">
+              <span>Última sincronização com sucesso:</span>
+              <span className="font-medium text-slate-200">
+                {formatDate(lastSuccessfulSyncAt)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>Status do Proxy:</span>
+              <span className="font-medium text-emerald-400">
+                Conectado (Proxy MeuPluggy)
+              </span>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-slate-500">
+            Os dados do Nubank são sincronizados continuamente pelo conector Meu Pluggy via webhooks seguros, sem necessidade de atualização manual.
+          </p>
         </div>
-
-        {/* Dica de Credenciais do Sandbox */}
-        <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/15 flex items-start gap-2 text-[11px] text-slate-300">
-          <Info className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <span className="font-semibold text-emerald-400 block mb-0.5">Credenciais Pluggy Bank (Sandbox):</span>
-            <span>Usuário: <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300 font-mono">user-ok</code> | Senha: <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300 font-mono">password-ok</code></span>
+      ) : (
+        /* Seção para Conectar o Conector MeuPluggy */
+        <div className="mt-2 rounded-xl bg-slate-900/40 border border-dashed border-slate-800 p-4 flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-bold text-slate-200">Conexão via Meu Pluggy</h3>
+              <p className="text-[11px] text-slate-400">
+                Conecte o proxy MeuPluggy para importar dados do Nubank
+              </p>
+            </div>
           </div>
-        </div>
 
-        {syncStatus && (
-          <div className="p-3 rounded-lg bg-slate-900 border border-slate-700/60 flex items-center gap-2 text-xs text-slate-200 animate-fadeIn">
-            {isSyncing ? (
-              <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
-            ) : (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-            )}
-            <span>{syncStatus}</span>
+          <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/15 flex items-start gap-2 text-[11px] text-slate-300">
+            <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold text-emerald-400 block mb-0.5">
+                Fluxo Seguro via MeuPluggy:
+              </span>
+              <span>
+                No widget, selecione o conector <code className="bg-slate-950 px-1 py-0.5 rounded text-emerald-300 font-mono">MeuPluggy</code> para vincular suas contas reais do Nubank com segurança.
+              </span>
+            </div>
           </div>
-        )}
 
-        <button
-          onClick={handleStartConnect}
-          disabled={isConnecting || isSyncing}
-          className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 text-xs font-semibold flex items-center justify-center gap-2 border border-slate-700 transition-colors disabled:opacity-50"
-        >
-          {isConnecting ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-              <span>Gerando token seguro...</span>
-            </>
-          ) : (
-            <>
-              <PlusCircle className="w-4 h-4 text-emerald-400" />
-              <span>Conectar Banco no Sandbox</span>
-            </>
+          {syncStatus && (
+            <div className="p-3 rounded-lg bg-slate-900 border border-slate-700/60 flex items-center gap-2 text-xs text-slate-200 animate-fadeIn">
+              {isSyncing ? (
+                <Loader2 className="w-4 h-4 text-emerald-400 animate-spin flex-shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              )}
+              <span>{syncStatus}</span>
+            </div>
           )}
-        </button>
-      </div>
+
+          <button
+            onClick={handleStartConnect}
+            disabled={isConnecting || isSyncing}
+            className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+          >
+            {isConnecting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
+                <span>Gerando token seguro...</span>
+              </>
+            ) : (
+              <>
+                <PlusCircle className="w-4 h-4 text-slate-950" />
+                <span>Conectar Meu Pluggy (Nubank)</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Modal / Widget Pluggy Connect */}
       {connectToken && (

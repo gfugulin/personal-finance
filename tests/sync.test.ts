@@ -11,18 +11,22 @@ vi.mock('../src/server/db/supabase', () => ({
   }),
 }));
 
-vi.mock('../src/server/integrations/pluggy/client', () => ({
-  getPluggyClient: () => ({
-    fetchTransaction: vi.fn().mockResolvedValue({
-      id: 'tx-123',
-      accountId: 'acc-1',
-      description: 'Compra Mercado',
-      amount: -150,
-      currencyCode: 'BRL',
-      date: '2026-10-10T12:00:00Z',
-      status: 'POSTED',
-    }),
+const mockPluggyClient = {
+  fetchTransaction: vi.fn().mockResolvedValue({
+    id: 'tx-123',
+    accountId: 'acc-1',
+    description: 'Compra Mercado',
+    amount: -150,
+    currencyCode: 'BRL',
+    date: '2026-10-10T12:00:00Z',
+    status: 'POSTED',
   }),
+  fetchItem: vi.fn(),
+  updateItem: vi.fn(),
+};
+
+vi.mock('../src/server/integrations/pluggy/client', () => ({
+  getPluggyClient: () => mockPluggyClient,
 }));
 
 describe('Pluggy Sync Engine (SPEC 002 & sync.feature)', () => {
@@ -83,4 +87,36 @@ describe('Pluggy Sync Engine (SPEC 002 & sync.feature)', () => {
       { onConflict: 'account_id,external_transaction_id' }
     );
   });
+
+  it('REQ 10: MeuPluggy proxy NEVER executes manual PATCH /items/{id}', async () => {
+    const { updateItemIfEligible } = await import('../src/server/integrations/pluggy/sync');
+
+    mockPluggyClient.fetchItem.mockResolvedValue({
+      id: 'item-meupluggy-1',
+      connector: { name: 'MeuPluggy' },
+      status: 'UPDATED',
+    });
+
+    const result = await updateItemIfEligible('item-meupluggy-1');
+
+    expect(result.allowed).toBe(false);
+    expect(mockPluggyClient.updateItem).not.toHaveBeenCalled();
+  });
+
+  it('REQ 10: Normal connector is allowed to execute manual PATCH /items/{id}', async () => {
+    const { updateItemIfEligible } = await import('../src/server/integrations/pluggy/sync');
+
+    mockPluggyClient.fetchItem.mockResolvedValue({
+      id: 'item-normal-1',
+      connector: { name: 'Pluggy Bank' },
+      status: 'UPDATED',
+    });
+    mockPluggyClient.updateItem.mockResolvedValue({ id: 'item-normal-1' });
+
+    const result = await updateItemIfEligible('item-normal-1');
+
+    expect(result.allowed).toBe(true);
+    expect(mockPluggyClient.updateItem).toHaveBeenCalledWith('item-normal-1');
+  });
 });
+
