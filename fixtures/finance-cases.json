@@ -1,0 +1,23 @@
+{
+  "card_double_count": {
+    "transactions": [
+      {"amount": -100, "nature": "EXPENSE", "accountType": "CREDIT"},
+      {"amount": -100, "nature": "CARD_PAYMENT", "accountType": "BANK"}
+    ],
+    "expectedMonthlySpending": 100
+  },
+  "free_money_negative": {
+    "cash": 1000,
+    "cardLiability": 600,
+    "futureExpenses": 300,
+    "futureInvestments": 0,
+    "reserveFloor": 300,
+    "expectedFreeMoney": -200
+  },
+  "net_worth": {
+    "cash": 12000,
+    "investments": 38000,
+    "cardLiability": 2000,
+    "expectedNetWorth": 48000
+  }
+}
