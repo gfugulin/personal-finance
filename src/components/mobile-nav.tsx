@@ -15,6 +15,11 @@ const navItems = [
 export function MobileNav() {
   const pathname = usePathname();
 
+  // Ocultar a navegação primária em telas de autenticação e configuração de segurança
+  if (pathname === '/login' || pathname.startsWith('/seguranca')) {
+    return null;
+  }
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-slate-950/90 backdrop-blur-md border-t border-slate-800 safe-area-pb">
       <div className="max-w-md mx-auto grid grid-cols-4 h-16">

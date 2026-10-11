@@ -14,5 +14,5 @@ Update this file during development.
 | TAX-001 | 005 | TAX-001 | unit/fiscal-classification | verified |
 | TAX-005 | 005 | TAX-004 | unit/irpf-2026 | verified |
 | TAX-008 | 005 | TAX-007 | e2e/tax-dossier | implemented |
-| SEC-001 | security | SEC-001 | security/aal2 | implemented |
+| SEC-001 | security | SEC-001 | security/aal2 | verified |
 | SEC-003 | security | SEC-003 | security/rls | planned |

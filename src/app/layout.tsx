@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { MobileNav } from '@/components/mobile-nav';
+import { AppHeader } from '@/components/app-header';
 
 export const metadata: Metadata = {
   title: 'Finanças Pessoais',
@@ -31,6 +32,7 @@ export default function RootLayout({
     <html lang="pt-BR" className="dark">
       <body className="bg-slate-950 text-slate-50 min-h-screen antialiased flex flex-col items-center">
         <main className="w-full max-w-md min-h-screen pb-20 px-4 pt-4 flex flex-col flex-1">
+          <AppHeader />
           {children}
         </main>
         <MobileNav />

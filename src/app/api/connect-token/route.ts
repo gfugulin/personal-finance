@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getPluggyClient } from '@/server/integrations/pluggy/client';
 import { createServerSupabaseClient } from '@/server/db/supabase';
+import { isOwnerEmail } from '@/server/auth/owner';
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,25 +11,26 @@ export async function POST(req: NextRequest) {
       error: userError,
     } = await supabase.auth.getUser();
 
-    // In production, strictly require Supabase authenticated user
-    let clientUserId = user?.id;
-    if (!clientUserId) {
-      if (process.env.NODE_ENV === 'production') {
-        return NextResponse.json({ error: 'Unauthorized: login required' }, { status: 401 });
-      }
-      // Development fallback id for local sandbox testing
-      clientUserId = '00000000-0000-0000-0000-000000000001';
+    // 1. Authenticated user required
+    if (userError || !user) {
+      return NextResponse.json({ error: 'Unauthorized: login required' }, { status: 401 });
     }
 
-    // AAL2 check in production if MFA enforced
-    if (process.env.NODE_ENV === 'production' && user) {
-      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (aalData?.currentLevel !== 'aal2') {
-        return NextResponse.json(
-          { error: 'AAL2 (TOTP MFA) is required to access Open Finance connections' },
-          { status: 403 }
-        );
-      }
+    // 2. Owner restriction
+    if (!isOwnerEmail(user.email)) {
+      return NextResponse.json(
+        { error: 'Forbidden: access restricted to owner' },
+        { status: 403 }
+      );
+    }
+
+    // 3. Strict AAL2 verification
+    const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aalData?.currentLevel !== 'aal2') {
+      return NextResponse.json(
+        { error: 'AAL2 (TOTP MFA) is required to access Open Finance connections' },
+        { status: 403 }
+      );
     }
 
     let itemId: string | undefined = undefined;
@@ -46,7 +48,7 @@ export async function POST(req: NextRequest) {
 
     const pluggy = getPluggyClient();
     const connectToken = await pluggy.createConnectToken(itemId, {
-      clientUserId,
+      clientUserId: user.id,
       avoidDuplicates: true,
       oauthRedirectUri,
     });
