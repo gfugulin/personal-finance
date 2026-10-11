@@ -57,11 +57,14 @@ export default function PatrimonioPage() {
       });
       const data = await res.json();
 
-      if (res.ok) {
+      if (res.status === 200) {
         setSyncStatus(`Conectado com sucesso! ${data.accountsCount || 0} conta(s) importada(s).`);
         setLastSyncDate('Agora mesmo');
+      } else if (res.status === 202) {
+        setSyncStatus('Conexão registrada! O banco está processando as transações no Sandbox via webhook.');
+        setLastSyncDate('Em andamento');
       } else {
-        setSyncStatus('Conexão registrada no sistema. Dados sendo processados via webhook.');
+        setSyncStatus(`Aviso na sincronização: ${data.error || 'Processando em segundo plano.'}`);
       }
     } catch {
       setSyncStatus('Conexão registrada! Concluindo sincronização via webhook.');

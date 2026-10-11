@@ -200,51 +200,33 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
 
     if (!dbAccount) continue;
 
-    // 3. Paginação completa de transações com pageSize=500 até totalPages (Seção 6.2 do Runbook)
-    let page = 1;
-    let hasMore = true;
+    // 3. Paginação via cursor (GET /v2/transactions) suportada nativamente pelo SDK Pluggy v2
+    const transactions = await pluggy.fetchAllTransactions(acc.id);
 
-    while (hasMore) {
-      const txResponse = await pluggy.fetchTransactions(acc.id, {
-        page,
-        pageSize: 500,
-      });
+    for (const tx of transactions) {
+      const txAmount = tx.amount;
+      const nature = inferFinancialNature(tx.description, txAmount, accType);
+      const taxTreatment = classifyFiscalSafety(txAmount, nature, false);
 
-      const transactions = txResponse.results || [];
-      if (transactions.length === 0) break;
-
-      for (const tx of transactions) {
-        const txAmount = tx.amount;
-        const nature = inferFinancialNature(tx.description, txAmount, accType);
-        const taxTreatment = classifyFiscalSafety(txAmount, nature, false);
-
-        await supabase.from('transactions').upsert(
-          {
-            user_id: userId,
-            account_id: dbAccount.id,
-            external_transaction_id: tx.id,
-            description: tx.description || 'Transação',
-            merchant_name: tx.merchant?.name || null,
-            amount: txAmount,
-            currency_code: tx.currencyCode || 'BRL',
-            transaction_date: tx.date || new Date().toISOString(),
-            status: tx.status === 'PENDING' ? 'PENDING' : 'POSTED',
-            nature,
-            tax_treatment: taxTreatment,
-            payment_method: tx.paymentData?.paymentMethod || null,
-            provider_category: tx.category || null,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'account_id,external_transaction_id' }
-        );
-      }
-
-      const totalPages = txResponse.totalPages || 1;
-      if (page >= totalPages) {
-        hasMore = false;
-      } else {
-        page++;
-      }
+      await supabase.from('transactions').upsert(
+        {
+          user_id: userId,
+          account_id: dbAccount.id,
+          external_transaction_id: tx.id,
+          description: tx.description || 'Transação',
+          merchant_name: tx.merchant?.name || null,
+          amount: txAmount,
+          currency_code: tx.currencyCode || 'BRL',
+          transaction_date: tx.date || new Date().toISOString(),
+          status: tx.status === 'PENDING' ? 'PENDING' : 'POSTED',
+          nature,
+          tax_treatment: taxTreatment,
+          payment_method: tx.paymentData?.paymentMethod || null,
+          provider_category: tx.category || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'account_id,external_transaction_id' }
+      );
     }
   }
 

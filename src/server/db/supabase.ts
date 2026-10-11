@@ -32,7 +32,7 @@ export function createServerSupabaseClient() {
 
 export function createAdminSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SECRET_KEY;
+  const serviceKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!supabaseUrl) {
     throw new Error('NEXT_PUBLIC_SUPABASE_URL is not configured');
@@ -40,7 +40,7 @@ export function createAdminSupabaseClient() {
 
   if (!serviceKey) {
     throw new Error(
-      'SUPABASE_SECRET_KEY is mandatory for admin operations and cannot be fallback-assigned to publishable key'
+      'SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY is mandatory for admin operations and cannot be fallback-assigned to publishable key'
     );
   }
 
