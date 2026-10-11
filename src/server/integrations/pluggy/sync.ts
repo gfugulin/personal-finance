@@ -66,8 +66,13 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
   // 1. Fetch Item from Pluggy
   const item = await pluggy.fetchItem(itemId);
 
-  // Determine user_id
+  // Determine real user_id from arguments, item or Supabase users
   let userId = defaultUserId;
+
+  if (!userId && item.clientUserId) {
+    userId = item.clientUserId;
+  }
+
   if (!userId) {
     const { data: existingConn } = await supabase
       .from('financial_connections')
@@ -77,11 +82,30 @@ export async function syncItemData(itemId: string, defaultUserId?: string) {
 
     if (existingConn?.user_id) {
       userId = existingConn.user_id;
-    } else if (item.clientUserId) {
-      userId = item.clientUserId;
-    } else {
-      userId = '00000000-0000-0000-0000-000000000001';
     }
+  }
+
+  if (!userId) {
+    // Lookup real owner user in database
+    const { data: firstProfile } = await supabase.from('profiles').select('id').maybeSingle();
+    if (firstProfile?.id) {
+      userId = firstProfile.id;
+    }
+  }
+
+  if (!userId) {
+    try {
+      const { data: usersData } = await supabase.auth.admin.listUsers();
+      if (usersData?.users && usersData.users.length > 0) {
+        userId = usersData.users[0].id;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!userId) {
+    throw new Error('Não foi possível identificar o usuário proprietário no Supabase para vincular a conexão.');
   }
 
   // Upsert connection

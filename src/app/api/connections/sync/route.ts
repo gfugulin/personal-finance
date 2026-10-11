@@ -16,12 +16,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'itemId is required' }, { status: 400 });
     }
 
-    const userId = user?.id || '00000000-0000-0000-0000-000000000001';
-
-    const result = await syncItemData(itemId, userId);
+    const result = await syncItemData(itemId, user?.id);
     return NextResponse.json(result, { status: 200 });
   } catch (err: any) {
-    console.error('Manual sync error:', err);
-    return NextResponse.json({ error: err.message || 'Sync failed' }, { status: 500 });
+    console.error('Manual sync error details:', err);
+    return NextResponse.json(
+      {
+        error: err?.message || 'Sync failed',
+        details: err?.stack || err?.toString(),
+      },
+      { status: 500 }
+    );
   }
 }

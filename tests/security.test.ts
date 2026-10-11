@@ -33,6 +33,7 @@ describe('Security & Webhook Idempotency (SPEC 002, 005, SEC)', () => {
   it('accepts webhook with matching secret', async () => {
     mockFrom.mockReturnValue({
       select: () => ({
+        maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'owner-uuid-1' } }),
         eq: () => ({
           maybeSingle: vi.fn().mockResolvedValue({ data: null }),
         }),
